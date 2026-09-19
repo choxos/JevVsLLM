@@ -10,7 +10,7 @@ TypeSafe key works for Jev as well.
 
 ![Jev plays Stockfish 1320 and Mercury 2.5 at once; the moves Jev weighed are drawn as arrows](documentation/tour.gif)
 
-<sub>The start of the tour. [Watch the full tour](documentation/tour.mp4) at 1080p, silent with captions: Jev's record, picking Stockfish and an LLM, both games at once on a split screen, one game up close with Jev's probabilities, the results, saved games, a game against Jev, and the dark theme. Every move in it is real: Jev on a TypeSafe key, Mercury 2.5 through OpenRouter, Stockfish in the page.</sub>
+<sub>The start of the tour. [Watch the full tour](documentation/tour.mp4) at 1080p, silent with captions: Jev's record, picking Stockfish and an LLM, both games at once on a split screen, one game up close with Jev's probabilities and the chess clocks, the results (Stockfish 1320 beat Jev; Jev mated Mercury 2.5 in 11 moves), saved games, a game against Jev, and the dark theme. Every move in it is real: Jev on a TypeSafe key, Mercury 2.5 through OpenRouter, Stockfish in the page.</sub>
 
 ## Three modes on one screen
 
