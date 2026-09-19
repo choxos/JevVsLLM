@@ -35,11 +35,13 @@ owns the game, Jev supplies the judgment.
 2. **Code describes what each move does, in words.** Jev reads text and is weak at arithmetic, so
    the facts are computed and written out: what it captures and what that is worth, whether it
    gives check or mate, whether the moved piece is safe, defended, or open to a cheaper attacker,
-   which enemy pieces it threatens, which of your pieces it leaves open to capture, whether it lets
-   the opponent mate at once, and the material balance after it. For example:
+   which enemy pieces it threatens, how much material it likely wins or loses once the opponent
+   takes back, which of your pieces it leaves open to capture, whether it lets the opponent mate at
+   once, and the material balance after it. For example:
 
    > `Nxf7`: Knight from e5 to f7. Captures a pawn (worth 1). The knight on f7 is attacked but
-   > defended. Threatens the rook on h8 and the queen on g5. White is ahead by 2 points of material.
+   > defended. Threatens the rook on h8 and the queen on g5. Likely wins 1 point of material. White
+   > is ahead by 2 points of material.
 
 3. **One request per move** carries the position (board, piece lists, material, threats, the moves
    so far, FEN) and two questions

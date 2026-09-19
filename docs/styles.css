@@ -75,7 +75,7 @@ svg { display: block; }
   padding-left: max(16px, env(safe-area-inset-left));
   padding-right: max(16px, env(safe-area-inset-right));
 }
-.top { grid-area: top; display: flex; align-items: center; gap: 16px; min-width: 0; }
+.top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; }
 .setup { grid-area: setup; }
 .stage { grid-area: stage; }
 .info { grid-area: info; }
@@ -85,6 +85,7 @@ svg { display: block; }
 .brand img { border-radius: 8px; }
 .brand b { font-weight: 650; }
 .modes { margin: 0 auto; }
+.statsbtn + .modes { margin-left: auto; }
 .top-actions { display: flex; align-items: center; gap: 6px; }
 
 .panel {
@@ -97,7 +98,7 @@ svg { display: block; }
   flex-direction: column;
   overflow: hidden;
 }
-.setup > section { display: none; padding: 16px; min-height: 0; flex: 1; }
+.setup > section { display: none; padding: 16px; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; }
 .app[data-mode="arena"] .for-arena,
 .app[data-mode="human"] .for-human,
 .app[data-mode="history"] .for-history { display: flex; }
@@ -182,8 +183,8 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 }
 .model:last-child { border-bottom: 0; }
 .model:hover { background: var(--panel-2); }
-.model[aria-selected="true"] { background: var(--accent-soft); }
-.model input { accent-color: var(--accent); margin: 0; pointer-events: none; }
+.model[data-picked="true"] { background: var(--accent-soft); }
+.model input { accent-color: var(--accent); margin: 0; }
 .model .name { font-size: 13px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model .id { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .price { font-size: 11px; font-weight: 650; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -335,9 +336,12 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 
 /* ------------------------------------------------------------------ dialogs */
 .dialog {
-  border: 1px solid var(--line); border-radius: 18px; padding: 22px; width: min(460px, calc(100vw - 32px));
+  border: 1px solid var(--line); border-radius: 18px; padding: 0; width: min(460px, calc(100vw - 32px));
+  max-height: calc(100dvh - 24px); overflow: auto;
   background: var(--panel); color: var(--text); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3);
 }
+.dialog > form, .dialog > .dialog-body { padding: 22px; }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dialog.wide { width: min(760px, calc(100vw - 32px)); }
 .dialog::backdrop { background: rgba(10, 12, 20, 0.45); backdrop-filter: blur(3px); }
 .dialog h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
@@ -348,6 +352,30 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .results th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .results td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .results td.opp { white-space: normal; font-weight: 550; }
+.results tr.group th { padding-top: 14px; color: var(--text); font-size: 12px; border-bottom: 1px solid var(--line); }
+.results td.barcell { width: 30%; min-width: 90px; }
+
+/* ------------------------------------------------------------------ Jev's record */
+.statsbtn {
+  display: flex; align-items: center; gap: 14px; height: 40px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel); white-space: nowrap;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.statsbtn:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.stats-title { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.stat { display: flex; align-items: baseline; gap: 5px; }
+.stat b { font-size: 15px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.stat small { font-size: 12px; color: var(--muted); }
+.stat.none b { color: var(--muted); font-weight: 500; font-size: 13px; }
+.stat-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.stat-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.stat-card b { font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.stat-card small { color: var(--muted); font-size: 12px; }
+.wdl { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line); min-width: 60px; }
+.wdl i { display: block; height: 100%; }
+.wdl .won { background: var(--good); }
+.wdl .drawn { background: var(--muted); opacity: 0.55; }
+.wdl .lost { background: var(--bad); }
 .results .score { font-size: 15px; margin: 0 0 12px; }
 
 .toast {
@@ -365,23 +393,48 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
   .app > .ptabs { display: flex; }
   .app[data-panel="setup"] .info, .app[data-panel="info"] .setup { display: none; }
 }
-@media (max-width: 760px) {
+@media (max-width: 1180px) {
+  .stats-title { display: none; }
+  .statsbtn { gap: 12px; }
+}
+@media (max-width: 1180px) and (max-height: 560px) {
+  /* short landscape screens: slimmer bars so the board keeps its room */
+  .player { height: 34px; }
+  .who .sub { display: none; }
+  .avatar { width: 24px; height: 24px; font-size: 11px; }
+  .stage > * { --size: min(calc(100cqh - 112px), calc(100cqw - 22px)); }
+  .icon-btn { width: 28px; height: 28px; }
+}
+@media (max-width: 760px) and (orientation: portrait) {
   body { font-size: 14px; }
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); grid-template-areas: "top" "stage" "tabs" "panel"; gap: 8px; padding: 8px 10px 10px; }
   .top { flex-wrap: wrap; gap: 8px; }
-  .brand span { display: none; }
+  .brand span, .stats-title, .top-actions .icon-btn { display: none; }
+  .statsbtn { flex: 1; min-width: 0; height: 36px; gap: 10px; padding: 0 10px; justify-content: space-around; }
+  .stat { flex-direction: column; align-items: center; gap: 0; line-height: 1.1; }
+  .stat b { font-size: 13px; }
+  .stat small { font-size: 10px; }
   .modes { order: 3; width: 100%; margin: 0; }
   .modes button { padding: 6px 6px; font-size: 13px; }
   .top-actions { margin-left: auto; }
-  .stage { grid-template-rows: auto auto auto auto; gap: 6px; }
-  .stage { container-type: inline-size; }
-  .stage > * { --size: min(calc(100cqw - 22px), 50dvh); }
-  .player { height: 38px; padding: 0 8px; }
+  .top-actions .btn { padding: 0 8px; }
+  .stage { container-type: inline-size; gap: 6px; }
+  .stage > * { --size: max(150px, min(calc(100cqw - 22px), calc(100dvh - 400px))); }
+  .player { height: 36px; padding: 0 8px; }
   .avatar { width: 26px; height: 26px; font-size: 11px; }
   .who .sub { display: none; }
-  .navbar { display: none; }
+  .navbar .icon-btn { width: 30px; height: 26px; }
+  .navinfo { display: none; }
   .setup > section { padding: 12px; gap: 10px; }
+  .field.grow { flex: none; }
+  .models { flex: none; height: 200px; }
+  .history { flex: none; max-height: 320px; }
   .explain { display: none; }
+  .stat-cards { grid-template-columns: 1fr; }
+  .stat-card b { font-size: 20px; }
+}
+@media (max-width: 400px) {
+  .pstat > span:not(.adv):not(.thinking) { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .pc, .evalbar .fill, .toast { transition: none; }

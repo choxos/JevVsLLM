@@ -181,8 +181,10 @@ export function createBoard(root, { onMove }) {
     if (!options.length) return false;
     selected = null;
     if (options.length > 1) {
-      // Several moves share the squares: a promotion. Ask which piece.
-      const color = pieces.get(from)?.code[0] || "w";
+      // Several moves share the squares: a promotion. Ask which piece; the pawn waits at home.
+      const pawn = pieces.get(from);
+      if (pawn) place(pawn.el, from);
+      const color = pawn?.code[0] || "w";
       const [x, y] = xy(to);
       promo = document.createElement("div");
       promo.className = "promo";
@@ -193,7 +195,8 @@ export function createBoard(root, { onMove }) {
         const b = document.createElement("button");
         b.type = "button";
         b.innerHTML = `<img src="${PIECE(color + t.toUpperCase())}" alt="${{ q: "Queen", n: "Knight", r: "Rook", b: "Bishop" }[t]}">`;
-        b.addEventListener("pointerdown", (e) => (e.stopPropagation(), closePromo(), onMove(from, to, t)));
+        b.addEventListener("pointerdown", (e) => e.stopPropagation()); // the board would close the picker first
+        b.addEventListener("click", () => (closePromo(), onMove(from, to, t)));
         promo.append(b);
       }
       root.append(promo);

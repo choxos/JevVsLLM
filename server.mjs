@@ -8,6 +8,7 @@
  *   POST /api/games       store one finished game, after replaying every move with chess.js
  *   GET  /api/games       the latest games, newest first, without their moves
  *   GET  /api/games/<id>  one game with its moves
+ *   GET  /api/stats       Jev's results against humans, LLMs and engines, and each opponent
  *
  * API keys are never stored or logged. The relay hands the Authorization header to TypeSafe and
  * forgets it, and a saved game is rebuilt field by field from what a game needs, so nothing else
@@ -73,7 +74,7 @@ function side(p) {
   return {
     kind,
     name: str(p?.name, 80) || (kind === "human" ? "You" : ""),
-    model: MODEL_ID.test(p?.model || "") ? p.model : "",
+    model: typeof p?.model === "string" && MODEL_ID.test(p.model) ? p.model : "",
     route: kind === "jev" && ["openrouter", "typesafe"].includes(p?.route) ? p.route : "",
   };
 }
@@ -104,6 +105,7 @@ export function cleanGame(g) {
   const chess = new Chess();
   const moves = g.moves.map(move);
   for (const m of moves) {
+    if (gameEnd(chess)) return { error: "Moves after the end of the game" };
     try {
       m.san = chess.move(m.san).san;
     } catch {
@@ -131,6 +133,24 @@ export function cleanGame(g) {
   };
 }
 
+/** Jev's results against humans, LLMs and engines, and against each opponent. */
+export function stats(games) {
+  const blank = () => ({ games: 0, won: 0, drawn: 0, lost: 0 });
+  const groups = { human: blank(), llm: blank(), engine: blank() };
+  const rows = new Map();
+  for (const g of games) {
+    const jev = g.white.kind === "jev" ? "w" : "b";
+    const opp = jev === "w" ? g.black : g.white;
+    if (!groups[opp.kind]) continue; // Jev against itself counts for neither side
+    const outcome = g.result === "1/2-1/2" ? "drawn" : (g.result === "1-0") === (jev === "w") ? "won" : "lost";
+    const key = opp.kind === "human" ? "human" : `${opp.kind}:${opp.model || opp.name}`;
+    const row = rows.get(key) || { kind: opp.kind, name: opp.kind === "human" ? "Humans" : opp.name || opp.model, model: opp.model, ...blank() };
+    for (const r of [groups[opp.kind], row]) r.games++, r[outcome]++;
+    rows.set(key, row);
+  }
+  return { groups, opponents: [...rows.values()].sort((a, b) => b.games - a.games || a.name.localeCompare(b.name)) };
+}
+
 // ponytail: every list and lookup reads the whole file; move to SQLite once it holds tens of thousands of games.
 function readGames(file) {
   if (!fs.existsSync(file)) return [];
@@ -153,6 +173,16 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
   const file = path.join(dataDir, "games.jsonl");
 
   return http.createServer(async (req, res) => {
+    try {
+      await handle(req, res);
+    } catch (err) {
+      // Hostile input must never take the process down
+      if (!res.headersSent) json(res, 400, { detail: "Bad request" });
+      else res.destroy();
+    }
+  });
+
+  async function handle(req, res) {
     const url = new URL(req.url, "http://localhost");
     // Only this site's own pages may post: a foreign page's Origin names another host
     if (req.method === "POST" && req.headers.origin) {
@@ -172,12 +202,15 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
       } catch {
         return json(res, 413, { detail: "Request too large" });
       }
+      // A page that stops a game drops its request; stop TypeSafe's too
+      const gone = new AbortController();
+      res.on("close", () => gone.abort());
       try {
         const r = await fetch(TYPESAFE_URL, {
           method: "POST",
           headers: { Authorization: req.headers.authorization, "Content-Type": "application/json" },
           body,
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.any([gone.signal, AbortSignal.timeout(30_000)]),
         });
         const retry = r.headers.get("retry-after");
         return send(res, r.status, r.headers.get("content-type") || "application/json", Buffer.from(await r.arrayBuffer()), retry ? { "Retry-After": retry } : {});
@@ -206,6 +239,7 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
         .map(({ moves, ...summary }) => summary);
       return json(res, 200, { games });
     }
+    if (url.pathname === "/api/stats" && req.method === "GET") return json(res, 200, stats(readGames(file)));
     const one = /^\/api\/games\/([0-9a-f]{12})$/.exec(url.pathname);
     if (one && req.method === "GET") {
       const game = readGames(file).find((g) => g.id === one[1]);
@@ -223,7 +257,7 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
     if (fs.existsSync(target) && fs.statSync(target).isDirectory()) target = path.join(target, "index.html");
     if (!fs.existsSync(target)) return send(res, 404, "text/plain", "Not found");
     send(res, 200, TYPES[path.extname(target)] || "application/octet-stream", fs.createReadStream(target));
-  });
+  }
 }
 
 // Start when run directly, or by pm2, which loads ES modules through its own script.

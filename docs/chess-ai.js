@@ -50,20 +50,40 @@ function materialWords(chess, us) {
   return `${COLOR[us]} is ${d > 0 ? "ahead" : "behind"} by ${n} point${n > 1 ? "s" : ""} of material.`;
 }
 
-/** Pieces of `color` (not the king) that the other side can win: undefended, or attacked by something cheaper. */
-function loosePieces(chess, color) {
+/** The square a capture empties: for en passant, the passed pawn's square, not the one moved to. */
+const takenFrom = (r) => (r.flags.includes("e") ? r.to[0] + r.from[1] : r.to);
+
+/** The legal captures of the piece on `sq`, cheapest capturing piece first. */
+const takersOf = (replies, sq) => replies.filter((r) => r.captured && takenFrom(r) === sq).sort((a, b) => (VALUES[a.piece] || 99) - (VALUES[b.piece] || 99));
+
+/** The other side's legal moves as if it were its turn, or null when that position cannot be set up. */
+function repliesOf(chess) {
+  const f = chess.fen().split(" ");
+  f[1] = other(f[1]);
+  f[3] = "-";
+  try {
+    return new Chess(f.join(" ")).moves({ verbose: true });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pieces of `color` (not the king) that the other side can win with a legal capture: undefended,
+ * or taken by something cheaper. `replies` are the other side's legal moves; without them,
+ * attacks are counted as the pieces stand, pins included.
+ */
+function loosePieces(chess, color, replies) {
+  const cheapestTaker = (sq) => {
+    const values = replies ? takersOf(replies, sq).map((r) => VALUES[r.piece] || 99) : chess.attackers(sq, other(color)).map((s) => VALUES[chess.get(s).type] || 99);
+    return values.length ? Math.min(...values) : null;
+  };
   return squares(chess, color)
     .filter((p) => p.type !== "k")
     .filter((p) => {
-      const attackers = chess.attackers(p.square, other(color));
-      if (!attackers.length) return false;
-      const cheapest = Math.min(...attackers.map((s) => VALUES[chess.get(s).type] || 99));
-      return !chess.attackers(p.square, color).length || cheapest < VALUES[p.type];
+      const cheapest = cheapestTaker(p.square);
+      return cheapest !== null && (!chess.attackers(p.square, color).length || cheapest < VALUES[p.type]);
     });
-}
-
-function mateInOne(chess) {
-  return chess.moves().find((san) => san.endsWith("#")) || null;
 }
 
 /** What one legal move does, in plain words. `chess` is left as it was. */
@@ -84,15 +104,24 @@ export function describeMove(chess, m) {
     else if (chess.isDraw()) parts.push("The game ends in a draw.");
     if (chess.inCheck()) parts.push("Gives check.");
 
+    // The opponent's legal answers: what it can take (en passant included) and whether it can mate
+    const replies = chess.moves({ verbose: true });
+
+    // What the move gains in material, less what it likely gives back to the cheapest recapture
+    let net = (VALUES[m.captured] || 0) + (m.promotion ? VALUES[m.promotion] - 1 : 0);
     const type = m.promotion || m.piece;
     if (type !== "k") {
       const name = `The ${NAMES[type]} on ${m.to}`;
-      const attackers = chess.attackers(m.to, them);
-      const cheapest = Math.min(...attackers.map((s) => VALUES[chess.get(s).type] || 99));
-      if (!attackers.length) parts.push(`${name} is not attacked.`);
-      else if (!chess.attackers(m.to, us).length) parts.push(`${name} is attacked and undefended: it can be taken for free.`);
-      else if (cheapest < VALUES[type]) parts.push(`${name} can be taken by a cheaper ${NAMES[chess.get(attackers.find((s) => VALUES[chess.get(s).type] === cheapest)).type]}.`);
-      else parts.push(`${name} is attacked but defended.`);
+      const takers = takersOf(replies, m.to);
+      const cheapest = VALUES[takers[0]?.piece] || 99;
+      if (!takers.length) parts.push(`${name} cannot be taken.`);
+      else if (!chess.attackers(m.to, us).length) {
+        parts.push(`${name} is attacked and undefended: it can be taken for free.`);
+        net -= VALUES[type];
+      } else if (cheapest < VALUES[type]) {
+        parts.push(`${name} can be taken by a cheaper ${NAMES[takers[0].piece]}.`);
+        net -= VALUES[type] - cheapest;
+      } else parts.push(`${name} is attacked but defended.`);
 
       const targets = squares(chess, them).filter(
         (p) => p.type !== "k" && chess.attackers(p.square, us).includes(m.to) && (!chess.attackers(p.square, them).length || VALUES[p.type] > VALUES[type]),
@@ -100,10 +129,15 @@ export function describeMove(chess, m) {
       if (targets.length) parts.push(`Threatens ${list(targets.map((p) => `the ${NAMES[p.type]} on ${p.square}`))}.`);
     }
 
-    const loose = loosePieces(chess, us).filter((p) => p.square !== m.to);
+    const points = (n) => `${n} point${n > 1 ? "s" : ""} of material`;
+    if (net > 0) parts.push(`Likely wins ${points(net)}.`);
+    else if (net < 0) parts.push(`Likely loses ${points(-net)} when the opponent takes.`);
+    else if (m.captured) parts.push("An even trade.");
+
+    const loose = loosePieces(chess, us, replies).filter((p) => p.square !== m.to);
     if (loose.length) parts.push(`Leaves ${list(loose.map((p) => `the ${NAMES[p.type]} on ${p.square}`))} open to capture.`);
-    const mate = mateInOne(chess);
-    if (mate) parts.push(`Allows ${COLOR[them]} to checkmate at once with ${mate}.`);
+    const mate = replies.find((r) => r.san.endsWith("#"));
+    if (mate) parts.push(`Allows ${COLOR[them]} to checkmate at once with ${mate.san}.`);
     parts.push(materialWords(chess, us));
   } finally {
     chess.undo();
@@ -142,7 +176,7 @@ export function moveText(sans, plies = 80) {
 /** The position as the player to move sees it. */
 export function positionState(chess) {
   const us = chess.turn();
-  const loose = loosePieces(chess, us);
+  const loose = loosePieces(chess, us, repliesOf(chess));
   const history = chess.history();
   return {
     game: "Chess, standard rules",
@@ -183,7 +217,7 @@ export function jevQuestions(chess, moves) {
         priorities: [
           "A move that gives checkmate wins the game: always choose it.",
           "Never choose a move that allows the opponent to checkmate at once.",
-          "Do not give pieces away: avoid moves that leave a piece attacked and undefended, or open to capture by a cheaper piece.",
+          "Do not give material away: avoid a move that likely loses material, or leaves a piece attacked and undefended or open to capture by a cheaper piece, unless it gives checkmate or stops the opponent from mating.",
           "Capture pieces that are undefended or worth more than the capturing piece.",
           "Threaten valuable enemy pieces, especially two at once, and give checks that win material.",
           "In the opening, develop knights and bishops toward the center, control the center with pawns and castle early.",
@@ -420,34 +454,46 @@ export function stockfishPlayer({ elo, open }) {
   let engine;
   let lines = [];
   let wake = () => {};
-  const next = async (prefix, signal) => {
+  /** The next line starting with `prefix`; gives up when the game stops or the engine goes quiet. */
+  const next = async (prefix, signal, ms) => {
+    const deadline = Date.now() + ms;
     for (;;) {
       if (signal?.aborted) throw signal.reason;
       const i = lines.findIndex((l) => l.startsWith(prefix));
       if (i >= 0) return lines.splice(0, i + 1).at(-1);
-      await new Promise((r) => (wake = r));
+      if (Date.now() >= deadline) throw new ApiError("Stockfish stopped answering", 504);
+      await new Promise((resolve) => {
+        const t = setTimeout(done, deadline - Date.now());
+        function done() {
+          clearTimeout(t);
+          signal?.removeEventListener("abort", done);
+          resolve();
+        }
+        wake = done;
+        signal?.addEventListener("abort", done, { once: true });
+      });
     }
   };
   async function start(signal) {
     engine = open();
     engine.listen((line) => (lines.push(...String(line).split("\n").filter(Boolean)), wake()));
     engine.post("uci");
-    await next("uciok", signal);
+    await next("uciok", signal, 20_000); // the first start compiles the WebAssembly
     engine.post("setoption name UCI_LimitStrength value true");
     engine.post(`setoption name UCI_Elo value ${elo}`);
     engine.post("ucinewgame");
     engine.post("isready");
-    await next("readyok", signal);
+    await next("readyok", signal, 20_000);
   }
   return {
     async move(chess, { signal } = {}) {
       if (!engine) await start(signal);
-      const stop = () => (engine.post("stop"), wake());
+      const stop = () => engine.post("stop");
       signal?.addEventListener("abort", stop, { once: true });
       try {
         engine.post(`position startpos moves ${chess.history({ verbose: true }).map(uci).join(" ")}`.trim());
         engine.post(`go movetime ${ENGINE_MOVETIME_MS}`);
-        const best = (await next("bestmove", signal)).split(" ")[1];
+        const best = (await next("bestmove", signal, 15_000)).split(" ")[1];
         const m = chess.moves({ verbose: true }).find((x) => uci(x) === best);
         if (!m) throw new ApiError(`Stockfish answered ${best}`, 500);
         return { san: m.san };
@@ -498,8 +544,10 @@ export async function playGame({ players, chess = new Chess(), signal, onMove, o
     onThink?.(color);
     const t0 = Date.now();
     const pick = await players[color].move(chess, { signal, onWait: (ms, e) => onWait?.(color, ms, e) });
+    if (signal?.aborted) throw signal.reason; // stopped while the answer was on its way: do not play it
     const move = chess.move(pick.san);
     onMove?.({ ...pick, san: move.san, uci: uci(move), color, ms: Date.now() - t0 });
+    if (gameEnd(chess, plyCap)) continue; // over: report it now, not after the pause, which Stop could cut short
     const wait = pause();
     if (wait) await sleep(wait, signal);
   }

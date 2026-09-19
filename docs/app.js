@@ -1,4 +1,4 @@
-import { Chess, COLOR, EVAL_LEVELS, ENGINE_ELOS, OPENROUTER, jevPlayer, llmPlayer, stockfishPlayer, playGame, pgnOf, material } from "./chess-ai.js";
+import { Chess, COLOR, EVAL_LEVELS, ENGINE_ELOS, OPENROUTER, jevPlayer, llmPlayer, stockfishPlayer, playGame, pgnOf, material, parseMove } from "./chess-ai.js";
 import { createBoard } from "./board.js";
 
 const START = new Chess().fen();
@@ -54,7 +54,8 @@ const S = {
   run: null, // {games, controller, running}
   arenaShown: null,
   human: null, // {game, controller}
-  saved: { list: null, query: "", game: null, error: "" },
+  saved: { list: null, query: "", game: null, error: "", loading: false },
+  stats: null, // Jev's record from the server
   ply: null, // the move being viewed; null follows the game
   flipped: false, // the reader's flip on top of the automatic side
 };
@@ -123,6 +124,7 @@ function playerFor(side, signal, game) {
   return {
     move: () =>
       new Promise((resolve, reject) => {
+        if (signal.aborted) return reject(signal.reason);
         game.resolve = resolve;
         signal.addEventListener("abort", () => reject(signal.reason), { once: true });
       }),
@@ -130,8 +132,10 @@ function playerFor(side, signal, game) {
 }
 
 let animateNext = null;
+/** A game changed: redraw everything if it is on the board, else only the matches list. */
 function changed(game, moved = false) {
-  if (moved && game === shown() && S.ply === null) animateNext = game.lasts.at(-1);
+  if (game !== shown()) return scheduleMatches();
+  if (moved && S.ply === null) animateNext = game.lasts.at(-1);
   schedule();
 }
 
@@ -191,7 +195,9 @@ async function save(game) {
     const r = await fetch("api/games", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
     game.savedId = (await r.json()).id;
-    S.saved.list = null; // refetch on the next visit
+    S.saved.list = null; // refetched now if the list is on screen, else on the next visit
+    if (S.mode === "history") loadSaved();
+    loadStats();
   } catch (e) {
     game.saveError = e.message;
   }
@@ -228,14 +234,14 @@ function startArena() {
   const games = opponents().flatMap((o) => colors.map((c) => (c === "w" ? makeGame(jevSide(), o) : makeGame(o, jevSide()))));
   if (!games.length) return;
   const controller = new AbortController();
-  S.run = { games, controller, running: true };
+  const run = (S.run = { games, controller, running: true });
   S.arenaShown = games[0];
   S.ply = null;
   S.flipped = false;
   setPanel("info");
   schedule();
   Promise.allSettled(games.map((g) => runGame(g, controller.signal))).then(() => {
-    S.run.running = false;
+    run.running = false;
     schedule();
     if (games.some((g) => g.status === "done") && games.length > 1) showResults(games);
   });
@@ -350,6 +356,8 @@ function onBoardMove(from, to, promotion) {
 // Saved games
 // ---------------------------------------------------------------------------------------------
 async function loadSaved() {
+  if (S.saved.loading) return;
+  S.saved.loading = true;
   try {
     const r = await fetch("api/games?limit=500");
     if (!r.ok) throw new Error(r.statusText);
@@ -359,14 +367,18 @@ async function loadSaved() {
     S.saved.list = [];
     S.saved.error = "Saved games are not available here.";
   }
+  S.saved.loading = false;
   renderHistory();
 }
 
+let openSeq = 0;
 async function openSaved(id) {
+  const seq = ++openSeq; // a slower answer for an earlier click must not replace a later one
   try {
     const r = await fetch(`api/games/${id}`);
     if (!r.ok) throw new Error();
     const g = await r.json();
+    if (seq !== openSeq) return;
     const game = replay(makeGame(g.white, g.black), g.moves);
     Object.assign(game, { status: "done", result: g.result, reason: g.reason, savedId: g.id, savedAt: g.savedAt });
     S.saved.game = game;
@@ -377,7 +389,7 @@ async function openSaved(id) {
     schedule();
     renderHistory();
   } catch {
-    toast("That game could not be loaded");
+    if (seq === openSeq) toast("That game could not be loaded");
   }
 }
 
@@ -386,12 +398,24 @@ async function openSaved(id) {
 // ---------------------------------------------------------------------------------------------
 const board = createBoard($("#board"), { onMove: onBoardMove });
 let pending = false;
+let pendingMatches = false;
 function schedule() {
   if (pending) return;
   pending = true;
   requestAnimationFrame(() => {
     pending = false;
+    pendingMatches = false;
     render();
+  });
+}
+function scheduleMatches() {
+  if (pending || pendingMatches) return;
+  pendingMatches = true;
+  requestAnimationFrame(() => {
+    if (!pendingMatches) return;
+    pendingMatches = false;
+    renderMatches();
+    renderSetup();
   });
 }
 
@@ -439,7 +463,7 @@ function renderBoard(g) {
   let check = null;
   if (pos.inCheck()) for (const row of pos.board()) for (const p of row) if (p?.type === "k" && p.color === pos.turn()) check = p.square;
   let movable = null;
-  if (g?.resolve && S.ply === null) {
+  if (g?.resolve && g.status === "running" && S.ply === null) {
     movable = new Map();
     for (const m of g.chess.moves({ verbose: true })) movable.set(m.from, [...(movable.get(m.from) || []), m]);
   }
@@ -658,23 +682,21 @@ function renderModels() {
     .filter((m) => S.picks.has(m.id) || ((!S.freeOnly || m.free) && words.every((w) => m.search.includes(w))))
     .sort((a, b) => S.picks.has(b.id) - S.picks.has(a.id) || a.name.localeCompare(b.name));
   if (!list.length) return fill(box, h("p", { class: "empty" }, "No model matches."));
-  fill(box, 
-    ...list.map((m) =>
+  // Native checkboxes in labels, so the list works from the keyboard too
+  const toggle = (id) => {
+    S.picks.has(id) ? S.picks.delete(id) : S.picks.add(id);
+    store.set("picks", [...S.picks]);
+    renderModels();
+    box.querySelector(`input[value="${CSS.escape(id)}"]`)?.focus();
+    schedule();
+  };
+  fill(
+    box,
+    list.map((m) =>
       h(
-        "div",
-        {
-          class: "model",
-          role: "option",
-          "aria-selected": String(S.picks.has(m.id)),
-          title: m.id,
-          onclick: () => {
-            S.picks.has(m.id) ? S.picks.delete(m.id) : S.picks.add(m.id);
-            store.set("picks", [...S.picks]);
-            renderModels();
-            schedule();
-          },
-        },
-        h("input", { type: "checkbox", tabindex: "-1", checked: S.picks.has(m.id) }),
+        "label",
+        { class: "model", title: m.id, "data-picked": String(S.picks.has(m.id)) },
+        h("input", { type: "checkbox", value: m.id, checked: S.picks.has(m.id), onchange: () => toggle(m.id) }),
         h("div", { style: "min-width:0" }, h("div", { class: "name" }, m.name), h("div", { class: "id" }, m.id)),
         m.free ? h("span", { class: "price free" }, "Free") : h("span", { class: "price", title: "Input and output price per million tokens" }, m.price),
       ),
@@ -685,7 +707,10 @@ function renderModels() {
 function renderHistory() {
   const box = $("#history");
   const list = S.saved.list;
-  if (!list) return fill(box, h("p", { class: "empty" }, "Loading…"));
+  if (!list) {
+    loadSaved();
+    return fill(box, h("p", { class: "empty" }, "Loading…"));
+  }
   const words = S.saved.query.toLowerCase().split(/\s+/).filter(Boolean);
   const games = list.filter((g) => words.every((w) => `${g.white.name} ${g.black.name} ${g.white.model} ${g.black.model}`.toLowerCase().includes(w)));
   const score = (g) => (g.result === "1/2-1/2" ? 0.5 : (g.result === "1-0") === (g.white.kind === "jev") ? 1 : 0);
@@ -712,6 +737,95 @@ function renderHistory() {
     }),
   );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Jev's record: win rates against humans, LLMs and engines, and against each opponent
+// ---------------------------------------------------------------------------------------------
+const KINDS = [
+  ["human", "Humans"],
+  ["llm", "LLMs"],
+  ["engine", "Engines"],
+];
+const rate = (r) => (r.games ? `${Math.round((r.won / r.games) * 100)}%` : "none");
+const tally = (r) => `${plural(r.games, "game")}: ${r.won} won, ${r.drawn} drawn, ${r.lost} lost`;
+
+async function loadStats() {
+  try {
+    const r = await fetch("api/stats");
+    if (!r.ok) throw new Error(r.statusText);
+    S.stats = await r.json();
+  } catch {
+    S.stats = null;
+  }
+  renderStats();
+}
+
+function renderStats() {
+  const btn = $("#statsBtn");
+  btn.hidden = !S.stats;
+  if (!S.stats) return;
+  for (const el of btn.querySelectorAll(".stat")) {
+    const g = S.stats.groups[el.dataset.kind];
+    el.querySelector("b").textContent = rate(g);
+    el.classList.toggle("none", !g.games);
+    el.title = tally(g);
+  }
+  if ($("#statsDialog").open) renderStatsDialog();
+}
+
+/** A won, drawn and lost bar. */
+const wdl = (r) =>
+  h(
+    "span",
+    { class: "wdl", title: tally(r) },
+    ["won", "drawn", "lost"].map((k) => r[k] > 0 && h("i", { class: k, style: `width:${(r[k] / r.games) * 100}%` })),
+  );
+
+function renderStatsDialog() {
+  const { groups, opponents } = S.stats;
+  const elo = (o) => Number(/(\d+)$/.exec(o.model || "")?.[1]) || 0;
+  fill(
+    $("#statCards"),
+    KINDS.map(([k, label]) => h("div", { class: "stat-card" }, h("span", { class: "label" }, `vs ${label}`), h("b", {}, rate(groups[k])), wdl(groups[k]), h("small", {}, tally(groups[k])))),
+  );
+  const rows = KINDS.flatMap(([k, label]) => {
+    const list = opponents.filter((o) => o.kind === k);
+    if (k === "engine") list.sort((a, b) => elo(a) - elo(b));
+    if (!list.length) return [];
+    return [
+      h("tr", { class: "group" }, h("th", { colspan: "7" }, label)),
+      list.map((o) =>
+        h(
+          "tr",
+          {},
+          h("td", { class: "opp", title: o.model || null }, o.name),
+          h("td", {}, o.games),
+          h("td", {}, o.won),
+          h("td", {}, o.drawn),
+          h("td", {}, o.lost),
+          h("td", {}, h("b", {}, rate(o))),
+          h("td", { class: "barcell" }, wdl(o)),
+        ),
+      ),
+    ];
+  });
+  fill(
+    $("#statTable"),
+    rows.length
+      ? h("table", {}, h("thead", {}, h("tr", {}, ["Opponent", "Games", "Won", "Drawn", "Lost", "Win rate", ""].map((t) => h("th", {}, t)))), h("tbody", {}, rows))
+      : h("p", { class: "empty" }, "No saved games yet."),
+  );
+}
+
+$("#statsBtn").addEventListener("click", () => {
+  if (!S.stats) return;
+  renderStatsDialog();
+  $("#statsDialog").showModal();
+});
+$("#statsClose").addEventListener("click", () => $("#statsDialog").close());
+// Every dialog closes when a click lands outside its box: on the backdrop, the click's target is
+// the dialog element itself, since its content fills the box
+for (const d of $$("dialog")) d.addEventListener("click", (e) => e.target === d && d.close());
 
 // thinking clocks tick without a full render
 setInterval(() => {
@@ -822,6 +936,17 @@ $("#freeOnly").addEventListener("change", (e) => {
 });
 $("#startBtn").addEventListener("click", startArena);
 $("#newGameBtn").addEventListener("click", newHumanGame);
+$("#typedMove").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const g = S.human?.game;
+  const input = $("#moveInput");
+  if (!g?.resolve || g.status !== "running") return toast(g?.status === "running" ? "Wait for Jev's move" : "Start a new game first");
+  const m = parseMove(`MOVE: ${input.value.trim()}`, g.chess.moves({ verbose: true }));
+  if (!m) return toast(`${input.value.trim() || "That"} is not a legal move here`);
+  input.value = "";
+  S.ply = null;
+  onBoardMove(m.from, m.to, m.promotion);
+});
 $("#resignBtn").addEventListener("click", resign);
 $("#showArrows").addEventListener("change", (e) => {
   S.showArrows = e.target.checked;
@@ -888,3 +1013,4 @@ if (/^[0-9a-f]{12}$/.test(linked || "")) {
   openSaved(linked);
 } else setMode(S.mode);
 renderModels();
+loadStats();

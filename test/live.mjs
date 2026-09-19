@@ -10,6 +10,7 @@
  */
 import fs from "node:fs";
 import { spawn } from "node:child_process";
+import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Chess, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, COLOR } from "../docs/chess-ai.js";
 
@@ -23,7 +24,7 @@ if (ENGINE) {
   const bin = fileURLToPath(new URL("../docs/vendor/stockfish/stockfish-19-lite-single.js", import.meta.url));
   const open = () => {
     const p = spawn(process.execPath, [bin]);
-    return { post: (c) => p.stdin.write(c + "\n"), listen: (fn) => p.stdout.on("data", fn), close: () => p.kill() };
+    return { post: (c) => p.stdin.write(c + "\n"), listen: (fn) => readline.createInterface({ input: p.stdout }).on("line", fn), close: () => p.kill() };
   };
   opponent = stockfishPlayer({ elo: Number(ENGINE), open });
   side = { kind: "engine", name: `Stockfish ${ENGINE}`, model: `stockfish-19-elo-${ENGINE}` };

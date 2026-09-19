@@ -20,6 +20,12 @@
         <img src="favicon.svg" alt="" width="28" height="28">
         <span>Jev <b>Chess</b></span>
       </a>
+      <button type="button" class="statsbtn" id="statsBtn" hidden aria-haspopup="dialog" title="Jev's win rate in all saved games. Click for each opponent.">
+        <span class="stats-title">Jev wins</span>
+        <span class="stat" data-kind="human"><b>none</b><small>vs humans</small></span>
+        <span class="stat" data-kind="llm"><b>none</b><small>vs LLMs</small></span>
+        <span class="stat" data-kind="engine"><b>none</b><small>vs engines</small></span>
+      </button>
       <nav class="seg modes" aria-label="Mode">
         <button type="button" data-mode="arena" aria-pressed="true">Jev vs machines</button>
         <button type="button" data-mode="human" aria-pressed="false">You vs Jev</button>
@@ -51,7 +57,7 @@
             <input id="modelSearch" type="search" placeholder="Search LLMs on OpenRouter" autocomplete="off" spellcheck="false">
             <label class="toggle" title="Show only free models"><input type="checkbox" id="freeOnly" checked><span>Free</span></label>
           </div>
-          <div class="models" id="models" role="listbox" aria-multiselectable="true" aria-label="LLMs"><p class="empty">Loading models…</p></div>
+          <div class="models" id="models" role="group" aria-label="LLMs"><p class="empty">Loading models…</p></div>
           <p class="hint" id="pickSummary">Pick one or more opponents.</p>
         </div>
         <div class="field">
@@ -89,6 +95,10 @@
           <button type="button" class="btn primary big" id="newGameBtn">New game</button>
           <button type="button" class="btn" id="resignBtn" disabled>Resign</button>
         </div>
+        <form class="row" id="typedMove" autocomplete="off">
+          <input id="moveInput" type="text" placeholder="Or type a move: e4, Nf3, O-O, e7e8q" aria-label="Type your move" spellcheck="false">
+          <button type="submit" class="btn">Play</button>
+        </form>
         <p class="hint warn" id="humanHint" hidden></p>
         <div class="explain">
           <p>Drag a piece or click it, then click its square. Arrow keys step through the moves.</p>
@@ -148,6 +158,18 @@
         <button type="submit" class="btn primary" id="saveKeys" value="save">Save</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="statsDialog" class="dialog wide" aria-labelledby="statsTitle">
+    <div class="dialog-body stack">
+      <div class="dialog-head">
+        <h2 id="statsTitle">Jev's record</h2>
+        <button type="button" class="icon-btn" id="statsClose" aria-label="Close" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div class="stat-cards" id="statCards"></div>
+      <div class="results" id="statTable"></div>
+      <p class="hint">Every saved game counts: a win is a game Jev won; draws are not wins. Click outside this box to close it.</p>
+    </div>
   </dialog>
 
   <dialog id="resultsDialog" class="dialog wide">

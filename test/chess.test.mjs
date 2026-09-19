@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Chess, annotateMoves, parseMove, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, gameEnd, pgnOf, JEV } from "../docs/chess-ai.js";
 import { cleanGame } from "../server.mjs";
@@ -23,7 +24,10 @@ test("describes mate, forks, blunders and threats in words", () => {
 
   const fork = play("e4", "e5", "Nf3", "Nc6", "Bc4", "Nd4", "Nxe5", "Qg5");
   assert.match(textOf(fork, "Nxf7"), /Captures a pawn .* Threatens the rook on h8 and the queen on g5/);
-  assert.match(textOf(fork, "Qh5"), /queen on h5 is attacked and undefended/);
+  assert.match(textOf(fork, "Qh5"), /queen on h5 is attacked and undefended.* Likely loses 9 points of material/);
+  assert.match(textOf(fork, "Nxf7"), /Likely wins 1 point of material/);
+  // the queen for a knight, as Jev once played it
+  assert.match(textOf(play("e4", "e5", "Qf3", "Nf6", "Bc4", "Be7"), "Qxf6"), /Captures a knight .* undefended.* Likely loses 6 points of material/);
 
   const fool = play("f3", "e5");
   assert.match(textOf(fool, "g4"), /Allows Black to checkmate at once with Qh4#/);
@@ -107,7 +111,7 @@ test("Stockfish finds the mate", async () => {
   const bin = fileURLToPath(new URL("../docs/vendor/stockfish/stockfish-19-lite-single.js", import.meta.url));
   const open = () => {
     const p = spawn(process.execPath, [bin]);
-    return { post: (cmd) => p.stdin.write(cmd + "\n"), listen: (fn) => p.stdout.on("data", fn), close: () => p.kill() };
+    return { post: (cmd) => p.stdin.write(cmd + "\n"), listen: (fn) => readline.createInterface({ input: p.stdout }).on("line", fn), close: () => p.kill() };
   };
   const engine = stockfishPlayer({ elo: 1600, open });
   try {
@@ -137,4 +141,19 @@ test("a saved game is replayed and keeps only what a game needs", () => {
   assert.match(cleanGame({ white: { kind: "llm" }, black: { kind: "llm" }, moves: [{ san: "e4" }] }).error, /Jev/);
   const resigned = cleanGame({ white: { kind: "human" }, black: { kind: "jev" }, moves: [{ san: "e4" }], reason: "resignation" }).game;
   assert.deepEqual([resigned.result, resigned.white.name], ["0-1", "You"]);
+});
+
+test("only legal captures count: pins hold, en passant takes", () => {
+  // the knight on c6 is pinned to its king, so b4 does not hang the pawn
+  assert.doesNotMatch(textOf(play("e4", "e5", "Nf3", "Nc6", "Bb5", "d6"), "b4"), /pawn on b4 is attacked and undefended/);
+  // after e5, d5 can be taken en passant
+  assert.match(textOf(play("e4", "a6", "e5"), "d5"), /pawn on d5 is attacked but defended/);
+});
+
+test("a game that ends is reported before the pause", async () => {
+  const controller = new AbortController();
+  const moves = { w: ["f3", "g4"], b: ["e5", "Qh4#"] };
+  const scripted = (c) => ({ async move() { return { san: moves[c].shift() }; } });
+  const end = await playGame({ players: { w: scripted("w"), b: scripted("b") }, signal: controller.signal, pause: () => (moves.b.length ? 0 : 60_000), onMove: (m) => m.san === "Qh4#" && controller.abort() });
+  assert.deepEqual(end, { result: "0-1", reason: "checkmate" });
 });
