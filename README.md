@@ -7,8 +7,6 @@ weighed and how likely it thought each one was, and every finished game is saved
 **Play it at [jevchess.xera.ac](https://jevchess.xera.ac).** Bring an OpenRouter key: its free
 models cost nothing, and Jev runs on it too. A TypeSafe key works for Jev as well.
 
-![Jev plays Stockfish: the moves Jev weighed are drawn as arrows, with their probabilities beside the move list](documentation/screenshot.png)
-
 ## Three modes on one screen
 
 * **Jev vs machines.** Pick opponents: Stockfish 19 at one or more strengths (Elo 1320 to full

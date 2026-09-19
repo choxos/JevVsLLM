@@ -28,9 +28,11 @@ test("describes mate, forks, blunders and threats in words", () => {
   const fool = play("f3", "e5");
   assert.match(textOf(fool, "g4"), /Allows Black to checkmate at once with Qh4#/);
 
-  const annotated = annotateMoves(new Chess());
-  assert.equal(annotated.length, 20);
-  assert.equal(new Chess().fen(), annotateMoves(new Chess()) && new Chess().fen()); // position left untouched
+  const start = new Chess();
+  assert.equal(annotateMoves(start).length, 20);
+  const fen = fork.fen();
+  annotateMoves(fork);
+  assert.equal(fork.fen(), fen); // every tried move is taken back
 });
 
 test("reads a move out of a reply", () => {

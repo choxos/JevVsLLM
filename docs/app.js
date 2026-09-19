@@ -12,6 +12,7 @@ function h(tag, props = {}, ...kids) {
   for (const [k, v] of Object.entries(props)) {
     if (v == null || v === false) continue;
     if (k === "class") el.className = v;
+    else if (k === "style") el.style.cssText = v; // through CSSOM, which the site's CSP allows
     else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else el.setAttribute(k, v === true ? "" : v);
   }
