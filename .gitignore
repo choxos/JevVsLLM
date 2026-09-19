@@ -1,0 +1,9 @@
+node_modules/
+data/
+deploy/
+.env
+.env.*
+*.log
+.DS_Store
+.gstack/
+.hallmark/

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Jev Chess</title>
+  <meta name="description" content="Watch Jev, TypeSafe's System One model, play chess against any LLM on OpenRouter or against Stockfish, or play Jev yourself.">
+  <meta property="og:title" content="Jev Chess">
+  <meta property="og:description" content="Jev, TypeSafe's System One model, plays chess against LLMs, Stockfish and you.">
+  <meta property="og:url" content="https://jevchess.xera.ac/">
+  <meta name="theme-color" content="#5b4ff5">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="app" data-mode="arena" data-panel="setup">
+    <header class="top">
+      <a class="brand" href="./" aria-label="Jev Chess home">
+        <img src="favicon.svg" alt="" width="28" height="28">
+        <span>Jev <b>Chess</b></span>
+      </a>
+      <nav class="seg modes" aria-label="Mode">
+        <button type="button" data-mode="arena" aria-pressed="true">Jev vs machines</button>
+        <button type="button" data-mode="human" aria-pressed="false">You vs Jev</button>
+        <button type="button" data-mode="history" aria-pressed="false">Saved games</button>
+      </nav>
+      <div class="top-actions">
+        <button type="button" class="btn ghost" id="keysBtn"><span class="dot" id="keysDot"></span>API keys</button>
+        <a class="icon-btn" href="https://github.com/choxos/JevVsLLM" target="_blank" rel="noopener" aria-label="Source on GitHub" title="Source on GitHub">
+          <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <nav class="seg ptabs" aria-label="Panel">
+      <button type="button" data-panel="setup" aria-pressed="true">Setup</button>
+      <button type="button" data-panel="info" aria-pressed="false">Moves</button>
+    </nav>
+
+    <aside class="panel setup">
+      <!-- Jev vs machines -->
+      <section class="for-arena stack">
+        <div class="field grow">
+          <div class="label-row"><span class="label">Opponents</span><button type="button" class="link" id="clearPicks">Clear</button></div>
+          <div class="engine-row">
+            <span class="engine-name">Stockfish 19<small>engine, free</small></span>
+            <div class="chips" id="elos" aria-label="Stockfish strength (Elo)"></div>
+          </div>
+          <div class="search-row">
+            <input id="modelSearch" type="search" placeholder="Search LLMs on OpenRouter" autocomplete="off" spellcheck="false">
+            <label class="toggle" title="Show only free models"><input type="checkbox" id="freeOnly" checked><span>Free</span></label>
+          </div>
+          <div class="models" id="models" role="listbox" aria-multiselectable="true" aria-label="LLMs"><p class="empty">Loading models…</p></div>
+          <p class="hint" id="pickSummary">Pick one or more opponents.</p>
+        </div>
+        <div class="field">
+          <span class="label">Jev plays</span>
+          <div class="seg" id="jevColor">
+            <button type="button" data-v="w" aria-pressed="true">White</button>
+            <button type="button" data-v="b" aria-pressed="false">Black</button>
+            <button type="button" data-v="both" aria-pressed="false">Both</button>
+          </div>
+        </div>
+        <div class="field">
+          <span class="label">Pace</span>
+          <div class="seg" id="pace">
+            <button type="button" data-v="0" aria-pressed="false">Fast</button>
+            <button type="button" data-v="700" aria-pressed="true">Watch</button>
+            <button type="button" data-v="1600" aria-pressed="false">Slow</button>
+          </div>
+        </div>
+        <button type="button" class="btn primary big" id="startBtn">Start</button>
+        <p class="hint warn" id="arenaHint" hidden></p>
+      </section>
+
+      <!-- You vs Jev -->
+      <section class="for-human stack">
+        <div class="field">
+          <span class="label">You play</span>
+          <div class="seg" id="humanColor">
+            <button type="button" data-v="w" aria-pressed="true">White</button>
+            <button type="button" data-v="b" aria-pressed="false">Black</button>
+            <button type="button" data-v="random" aria-pressed="false">Random</button>
+          </div>
+        </div>
+        <label class="switch"><input type="checkbox" id="showArrows" checked><span>Show the moves Jev weighed</span></label>
+        <div class="row">
+          <button type="button" class="btn primary big" id="newGameBtn">New game</button>
+          <button type="button" class="btn" id="resignBtn" disabled>Resign</button>
+        </div>
+        <p class="hint warn" id="humanHint" hidden></p>
+        <div class="explain">
+          <p>Drag a piece or click it, then click its square. Arrow keys step through the moves.</p>
+          <p>Jev does not search ahead. For every legal move, code states what it does (captures, checks, pieces left open, mate threats) and Jev picks one, with a probability for each.</p>
+        </div>
+      </section>
+
+      <!-- Saved games -->
+      <section class="for-history stack">
+        <div class="record" id="record"></div>
+        <input id="historySearch" type="search" placeholder="Filter by opponent" autocomplete="off" spellcheck="false">
+        <div class="history" id="history"><p class="empty">Loading…</p></div>
+      </section>
+    </aside>
+
+    <main class="stage">
+      <div class="player" id="playerTop"></div>
+      <div class="board-area">
+        <div class="evalbar" id="evalbar" title="Jev's read of the position"><div class="fill"></div></div>
+        <div class="board" id="board"></div>
+      </div>
+      <div class="player" id="playerBottom"></div>
+      <div class="navbar">
+        <button type="button" class="icon-btn" data-nav="start" aria-label="First move" title="First move (Home)"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 5l-9 7 9 7z"/></svg></button>
+        <button type="button" class="icon-btn" data-nav="prev" aria-label="Previous move" title="Previous move (←)"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <span class="navinfo" id="navinfo"></span>
+        <button type="button" class="icon-btn" data-nav="next" aria-label="Next move" title="Next move (→)"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+        <button type="button" class="icon-btn" data-nav="end" aria-label="Latest move" title="Latest move (End)"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 5l9 7-9 7z"/></svg></button>
+        <button type="button" class="icon-btn" id="flipBtn" aria-label="Flip board" title="Flip board (F)"><svg viewBox="0 0 24 24"><path d="M7 4v14m0 0l-3-3m3 3l3-3M17 20V6m0 0l-3 3m3-3l3 3"/></svg></button>
+      </div>
+    </main>
+
+    <aside class="panel info">
+      <div class="matches" id="matches"></div>
+      <div class="moves" id="moves"></div>
+      <div class="detail" id="detail"></div>
+      <div class="gamebar" id="gamebar"></div>
+    </aside>
+  </div>
+
+  <dialog id="keysDialog" class="dialog">
+    <form method="dialog" class="stack">
+      <h2>API keys</h2>
+      <label class="field">
+        <span class="label">OpenRouter key <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">get one</a></span>
+        <input id="orKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-...">
+        <small>Needed for LLM opponents; free models cost nothing. Jev runs on it too.</small>
+      </label>
+      <label class="field">
+        <span class="label">TypeSafe key, optional <a href="https://typesafe.ai" target="_blank" rel="noopener">typesafe.ai</a></span>
+        <input id="tsKey" type="password" autocomplete="off" spellcheck="false" placeholder="Your TypeSafe API key">
+        <small>If set, Jev runs on your TypeSafe account instead of OpenRouter.</small>
+      </label>
+      <p class="privacy">Keys stay in this browser. They go only to OpenRouter, or to TypeSafe through this site's relay (TypeSafe does not accept calls from web pages), and are never stored on the server. Saved games hold the moves, never a key.</p>
+      <div class="row end">
+        <button type="button" class="btn ghost" id="forgetKeys">Forget keys</button>
+        <button type="submit" class="btn primary" id="saveKeys" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="resultsDialog" class="dialog wide">
+    <form method="dialog" class="stack">
+      <h2 id="resultsTitle">Results</h2>
+      <div class="results" id="results"></div>
+      <div class="row end"><button type="submit" class="btn primary">Close</button></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
