@@ -134,7 +134,12 @@ try {
     pointer = { x, y };
   }
   async function to(locator, ms) {
-    const box = await locator.boundingBox();
+    // lists that update as games move can replace an element between finding and measuring it
+    let box = null;
+    for (let k = 0; k < 40 && !box; k++) {
+      box = await locator.boundingBox().catch(() => null);
+      if (!box) await beat(50);
+    }
     if (!box) throw new Error("record-tour: tried to reach something that is not on screen");
     await glide(box.x + box.width / 2, box.y + box.height / 2, ms);
   }

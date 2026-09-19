@@ -716,19 +716,26 @@ function renderGamebar(g) {
   );
 }
 
+// Match rows are kept and updated in place: games move several times a second, and a list rebuilt
+// each time would drop keyboard focus and the row under the pointer
+const matchRows = new Map(); // game -> {row, st, title, meta, badge}
 function renderMatches() {
   const box = $("#matches");
-  if (S.mode !== "arena" || !S.run) return fill(box);
-  const done = S.run.games.filter((g) => g.status !== "running" && g.status !== "ready").length;
-  fill(box, 
-    h("h3", { class: "label" }, `Matches · ${done} of ${S.run.games.length} over`),
-    S.run.games.map((g) =>
-      h(
+  if (S.mode !== "arena" || !S.run) {
+    matchRows.clear();
+    return fill(box);
+  }
+  const games = S.run.games;
+  if ([...matchRows.keys()].some((g) => !games.includes(g))) matchRows.clear();
+  if (!box.firstElementChild || box.firstElementChild.tagName !== "H3" || box.children.length !== games.length + 1 || games.some((g) => !matchRows.has(g))) {
+    matchRows.clear();
+    const rows = games.map((g) => {
+      const parts = { st: h("span", { class: "st" }), title: h("div", { class: "title" }), meta: h("div", { class: "meta" }), badge: h("span") };
+      const row = h(
         "button",
         {
           type: "button",
           class: "match",
-          "aria-current": String(g === S.arenaShown),
           onclick: () => {
             S.arenaShown = g;
             S.ply = null;
@@ -737,12 +744,30 @@ function renderMatches() {
             schedule();
           },
         },
-        h("span", { class: `st ${g.status}` }),
-        h("span", {}, h("div", { class: "title" }, `${g.white.name} vs ${g.black.name}`), h("div", { class: "meta" }, `Jev ${jevColorOf(g) === "w" ? "White" : "Black"} · ${plural(Math.ceil(g.moves.length / 2), "move")}${g.waiting ? ` · ${g.waiting}` : ""}`)),
-        resultBadge(g),
-      ),
-    ),
-  );
+        parts.st,
+        h("span", {}, parts.title, parts.meta),
+        parts.badge,
+      );
+      matchRows.set(g, { row, ...parts });
+      return row;
+    });
+    fill(box, h("h3", { class: "label" }), rows);
+  }
+  const done = games.filter((g) => g.status !== "running" && g.status !== "ready").length;
+  box.firstElementChild.textContent = `Matches · ${done} of ${games.length} over`;
+  for (const g of games) {
+    const r = matchRows.get(g);
+    r.row.setAttribute("aria-current", String(g === S.arenaShown));
+    r.st.className = `st ${g.status}`;
+    r.title.textContent = `${g.white.name} vs ${g.black.name}`;
+    r.meta.textContent = `Jev ${jevColorOf(g) === "w" ? "White" : "Black"} · ${plural(Math.ceil(g.moves.length / 2), "move")}${g.waiting ? ` · ${g.waiting}` : ""}`;
+    const badge = resultBadge(g);
+    if (r.badge.className !== badge.className || r.badge.textContent !== badge.textContent) {
+      r.badge.className = badge.className;
+      r.badge.textContent = badge.textContent;
+      r.badge.title = badge.title || "";
+    }
+  }
 }
 
 function renderNav(g) {
@@ -807,6 +832,7 @@ function render() {
 
 function renderModels() {
   const box = $("#models");
+  $("#modelsNote").textContent = S.models ? `${S.models.length} models, live from OpenRouter at ${S.modelsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
   if (!S.models) return fill(box, h("p", { class: "empty" }, S.modelError || "Loading models…"));
   const words = S.query.toLowerCase().split(/\s+/).filter(Boolean);
   const list = S.models
@@ -1241,9 +1267,13 @@ document.addEventListener("keydown", (e) => {
 // ---------------------------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------------------------
-fetch(`${OPENROUTER}/api/v1/models`)
-  .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
-  .then(({ data }) => {
+// OpenRouter's list changes by the hour and its response may be cached for an hour, so it is fetched
+// fresh on every visit, past the browser's cache, and again every half hour while the page is open
+async function loadModels() {
+  try {
+    const r = await fetch(`${OPENROUTER}/api/v1/models`, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.statusText);
+    const { data } = await r.json();
     const perM = (v) => Number(v) * 1e6;
     S.models = data
       // text in, text out; music models such as Lyria answer with audio
@@ -1262,13 +1292,24 @@ fetch(`${OPENROUTER}/api/v1/models`)
           search: `${m.name} ${m.id}`.toLowerCase(),
         };
       });
-    renderModels();
-    schedule();
-  })
-  .catch(() => {
-    S.modelError = "OpenRouter's model list did not load. Reload the page to try again.";
-    renderModels();
-  });
+    S.modelsAt = new Date();
+    S.modelError = "";
+    // a model OpenRouter no longer lists cannot play: forget it rather than fail at Start
+    const ids = new Set(S.models.map((m) => m.id));
+    const gone = [...S.picks].filter((id) => !ids.has(id));
+    if (gone.length) {
+      for (const id of gone) S.picks.delete(id);
+      store.set("picks", [...S.picks]);
+      toast(`No longer on OpenRouter: ${gone.join(", ")}`);
+    }
+  } catch {
+    if (!S.models) S.modelError = "OpenRouter's model list did not load. Reload the page to try again.";
+  }
+  renderModels();
+  schedule();
+}
+loadModels();
+setInterval(loadModels, 30 * 60_000);
 
 const linked = new URLSearchParams(location.search).get("game");
 if (/^[0-9a-f]{12}$/.test(linked || "")) {
