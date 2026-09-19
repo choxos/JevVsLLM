@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { Chess, annotateMoves, positionState, parseMove, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, gameEnd, pgnOf, JEV } from "../docs/chess-ai.js";
+import { Chess, annotateMoves, positionState, parseMove, spokenMove, sayMove, voiceRequest, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, gameEnd, pgnOf, JEV } from "../docs/chess-ai.js";
 import { cleanGame } from "../server.mjs";
 
 const play = (...sans) => {
@@ -154,6 +154,8 @@ test("only legal captures count: pins hold, en passant takes", () => {
   assert.doesNotMatch(textOf(play("e4", "e5", "Nf3", "Nc6", "Bb5", "d6"), "b4"), /pawn on b4 is attacked and undefended/);
   // after e5, d5 can be taken en passant
   assert.match(textOf(play("e4", "a6", "e5"), "d5"), /pawn on d5 is attacked but defended/);
+  // the bishop on e3 is pinned to its king by the rook on e8, so it does not guard d4
+  assert.match(textOf(new Chess("4r2k/8/8/2b5/8/4BN2/8/4K3 w - - 0 1"), "Nd4"), /knight on d4 is attacked and undefended/);
   // here the pawn taken en passant cannot be won back: c3 guards d4, not d3 where the capturer lands
   assert.match(textOf(new Chess("7k/8/8/8/4p3/2P5/3P4/K7 w - - 0 1"), "d4"), /undefended.* Likely loses 1 point of material/);
 });
@@ -164,4 +166,33 @@ test("a game that ends is reported before the pause", async () => {
   const scripted = (c) => ({ async move() { return { san: moves[c].shift() }; } });
   const end = await playGame({ players: { w: scripted("w"), b: scripted("b") }, signal: controller.signal, pause: () => (moves.b.length ? 0 : 60_000), onMove: (m) => m.san === "Qh4#" && controller.abort() });
   assert.deepEqual(end, { result: "0-1", reason: "checkmate" });
+});
+
+test("reads a spoken move, and says one", () => {
+  const legal = play("e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6").moves({ verbose: true });
+  const cases = {
+    "knight g5": "Ng5",
+    "Knight to G5.": "Ng5",
+    "night g5": "Ng5",
+    "castle kingside": "O-O",
+    "castles short": "O-O",
+    "d4": "d4",
+    "D 4": "d4",
+    "d four": "d4",
+    "bishop takes f7": "Bxf7+",
+    "queen to e2": "Qe2",
+    "put my knight on g5": null, // loose words go to Jev
+    "castle": null, // which side?
+    "banana": null,
+  };
+  for (const [words, san] of Object.entries(cases)) assert.equal(spokenMove(words, legal)?.san ?? null, san, words);
+
+  const { state, questions } = voiceRequest(play("e4", "e5"), ["put my knight on f3", "put my night on f3"]);
+  assert.equal(state.spoken, "put my knight on f3");
+  assert.equal(questions.move.criteria.Nf3, "Knight from g1 to f3");
+  assert.ok("none" in questions.move.criteria);
+
+  assert.equal(sayMove("Nbd2"), "knight b d 2");
+  assert.equal(sayMove("exd8=N+"), "e takes d 8 promotes to knight, check");
+  assert.equal(sayMove("O-O-O#"), "castles queenside, checkmate");
 });

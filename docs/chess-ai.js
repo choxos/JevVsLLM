@@ -88,11 +88,18 @@ function loosePieces(chess, color, replies) {
     });
 }
 
-/** Whether `color` could take back after the capture `r`: on the square the capturer lands on, which en passant moves off the taken pawn's square. */
+/**
+ * Whether `color` could take back after the capture `r`, on the square the capturer lands on (en
+ * passant lands off the taken pawn's square), with a legal move: a pinned piece does not defend.
+ */
 function canRetake(chess, r, color) {
   chess.move({ from: r.from, to: r.to, promotion: r.promotion });
   try {
-    return chess.attackers(r.to, color).length > 0;
+    // chess.js's own _moves lists legal moves without working out check and mate for each, as
+    // moves() does, which made this ten times slower. It is internal, but chess.js is vendored at
+    // 1.4.0, so it cannot change under us.
+    const to = (8 - Number(r.to[1])) * 16 + (r.to.charCodeAt(0) - 97); // chess.js's 0x88 square index
+    return chess.attackers(r.to, color).some((sq) => chess._moves({ legal: true, square: sq }).some((x) => x.to === to));
   } finally {
     chess.undo();
   }
@@ -525,6 +532,80 @@ export function randomPlayer(random = Math.random) {
       return { san: legal[Math.floor(random() * legal.length)] };
     },
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Moves said aloud: an exact reading first, then Jev picks the legal move that was meant
+// ---------------------------------------------------------------------------------------------
+const SPOKEN_PIECES = { knight: "N", night: "N", nite: "N", knights: "N", bishop: "B", bishops: "B", rook: "R", rock: "R", rooks: "R", queen: "Q", queens: "Q", king: "K", kings: "K" };
+const SPOKEN_DIGITS = { one: "1", won: "1", two: "2", too: "2", three: "3", four: "4", for: "4", fore: "4", five: "5", six: "6", seven: "7", eight: "8", ate: "8" };
+const SPOKEN_FILLER = new Set(["to", "pawn", "pawns", "move", "moves", "moving", "on", "the", "my", "square", "goes", "go", "please", "and", "then", "from", "i", "play", "plays", "will", "ill", "i'll", "let's", "lets", "okay", "ok"]);
+
+/**
+ * The legal move a transcript names outright ("knight f3", "e4", "bishop takes c4", "e2 e4",
+ * "castle kingside"), or null when it needs a judgment, which Jev then makes.
+ */
+export function spokenMove(text, legal) {
+  const t = String(text || "").toLowerCase().replace(/[.,!?;:"]/g, " ").replace(/-/g, " ");
+  if (/\bcastles?\b|\bcastling\b/.test(t)) {
+    const long = /queen ?side|\blong\b/.test(t);
+    const short = /king ?side|\bshort\b/.test(t);
+    const san = long === short ? null : long ? "O-O-O" : "O-O";
+    return (san && legal.find((m) => m.san.replace(/[+#]/g, "") === san)) || null;
+  }
+  let out = "";
+  for (const w of t.split(/\s+/).filter(Boolean)) {
+    if (SPOKEN_PIECES[w]) out += SPOKEN_PIECES[w];
+    else if (["takes", "take", "captures", "capture", "x"].includes(w)) out += "x";
+    else if (["promotes", "promote", "promoting", "equals"].includes(w)) out += "=";
+    else if (/^[a-h][1-8]$/.test(w) || /^[a-h]$/.test(w)) out += w;
+    else if (/^[1-8]$/.test(w) && /[a-h]$/.test(out)) out += w;
+    else if (SPOKEN_DIGITS[w] && /[a-h]$/.test(out)) out += SPOKEN_DIGITS[w];
+    else if (!SPOKEN_FILLER.has(w)) return null; // a word this reading does not know: Jev's turn
+  }
+  return out ? parseMove(`MOVE: ${out}`, legal) : null;
+}
+
+/** A legal move in plain words, as an option for Jev when it reads a spoken move. */
+function plainMove(m) {
+  if (m.flags.includes("k")) return "Castles kingside";
+  if (m.flags.includes("q")) return "Castles queenside";
+  return `${cap(NAMES[m.piece])} from ${m.from} to ${m.to}${m.captured ? `, capturing the ${NAMES[m.captured]}` : ""}${m.promotion ? `, promoting to a ${NAMES[m.promotion]}` : ""}`;
+}
+
+/** One Jev request: which legal move do these words name? `heard` lists the recognizer's guesses. */
+export function voiceRequest(chess, heard) {
+  const criteria = Object.fromEntries(chess.moves({ verbose: true }).map((m) => [m.san, plainMove(m)]));
+  criteria.none = "The words name no legal move here, or are not about a move";
+  return {
+    state: { spoken: heard[0], other_hearings: heard.slice(1), player: COLOR[chess.turn()] },
+    questions: {
+      move: {
+        type: "choice",
+        instructions: {
+          question: "Which of the player's legal chess moves do the words in `spoken` name?",
+          notes: [
+            "`spoken` comes from speech recognition, which mishears: night for knight, rock for rook, for or fore for four, to or too for two, ate for eight, and letters that sound alike (b, c, d, e, g, t, v; a and h). `other_hearings` are its other guesses for the same words.",
+            "Players say moves in many ways: knight f3, knight to f3, put my knight on f3, bishop takes c4, e4, pawn to e4, queen takes on d8, castle kingside, short castle.",
+            "Choose none when the words name no legal move or are not a move at all.",
+          ],
+        },
+        criteria,
+      },
+    },
+  };
+}
+
+/** A move as it would be said aloud: "knight f 3", "e takes d 5, check", "castles kingside". */
+export function sayMove(san) {
+  const tail = san.endsWith("#") ? ", checkmate" : san.endsWith("+") ? ", check" : "";
+  const core = san.replace(/[+#]/g, "");
+  if (core === "O-O-O") return `castles queenside${tail}`;
+  if (core === "O-O") return `castles kingside${tail}`;
+  const piece = { N: "knight", B: "bishop", R: "rook", Q: "queen", K: "king" };
+  const [, p, body = "", promo] = /^([NBRQK]?)([a-h1-8x]*)(?:=([NBRQ]))?$/.exec(core) || [];
+  const said = body.split("").map((ch) => (ch === "x" ? "takes" : ch)); // squares letter by letter: "b d 2"
+  return [p && piece[p], ...said, promo && `promotes to ${piece[promo]}`].filter(Boolean).join(" ") + tail;
 }
 
 // ---------------------------------------------------------------------------------------------

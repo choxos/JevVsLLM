@@ -7,3 +7,4 @@ deploy/
 .DS_Store
 .gstack/
 .hallmark/
+build/

@@ -3,13 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Watch Jev, TypeSafe's System One model, play chess against any LLM on OpenRouter, or play Jev yourself.",
+  "description": "Watch Jev, TypeSafe's System One model, play chess against any LLM on OpenRouter or Stockfish, or play Jev yourself.",
   "engines": {
     "node": ">=20.3"
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "tour": "node record-tour.mjs"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  }
 }

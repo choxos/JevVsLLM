@@ -154,7 +154,10 @@ export function createBoard(root, { onMove }) {
       selected = selected && st.movable?.has(selected) ? selected : null;
       closePromo();
     }
-    if (!st.movable) selected = null;
+    if (!st.movable) {
+      selected = null;
+      closePromo(); // the game ended or paused with a promotion still being chosen
+    }
     renderPieces(fenChanged ? animate : null);
     renderMarks();
     renderArrows();

@@ -1,4 +1,4 @@
-import { Chess, COLOR, EVAL_LEVELS, ENGINE_ELOS, OPENROUTER, jevPlayer, llmPlayer, stockfishPlayer, playGame, pgnOf, material, parseMove } from "./chess-ai.js";
+import { Chess, COLOR, EVAL_LEVELS, ENGINE_ELOS, OPENROUTER, jevPlayer, llmPlayer, stockfishPlayer, playGame, pgnOf, material, parseMove, spokenMove, voiceRequest, sayMove, askJev } from "./chess-ai.js";
 import { createBoard } from "./board.js";
 
 const START = new Chess().fen();
@@ -57,6 +57,7 @@ const S = {
   saved: { list: null, query: "", game: null, error: "", loading: false },
   stats: null, // Jev's record from the server
   ply: null, // the move being viewed; null follows the game
+  view: "grid", // with several games at once: "grid" shows every board, "one" the selected game
   flipped: false, // the reader's flip on top of the automatic side
 };
 
@@ -132,10 +133,15 @@ function playerFor(side, signal, game) {
 }
 
 let animateNext = null;
-/** A game changed: redraw everything if it is on the board, else only the matches list. */
+/** A game changed: redraw everything if it is the one followed, else only the matches and the grid. */
 function changed(game, moved = false) {
+  const c = cells.get(game);
+  if (c) {
+    c.dirty = true;
+    if (moved) c.animate = game.lasts.at(-1);
+  }
   if (game !== shown()) return scheduleMatches();
-  if (moved && S.ply === null) animateNext = game.lasts.at(-1);
+  if (moved && S.ply === null && !gridOn()) animateNext = game.lasts.at(-1);
   schedule();
 }
 
@@ -165,6 +171,7 @@ async function runGame(game, signal) {
         game.thinking = null;
         game.waiting = "";
         changed(game, true);
+        if (human && m.color !== human) announce(m.san);
       },
     });
     Object.assign(game, { status: "done", result: end.result, reason: end.reason, thinking: null });
@@ -236,6 +243,9 @@ function startArena() {
   const controller = new AbortController();
   const run = (S.run = { games, controller, running: true });
   S.arenaShown = games[0];
+  S.view = games.length > 1 ? "grid" : "one";
+  for (const c of cells.values()) c.cell.remove();
+  cells.clear();
   S.ply = null;
   S.flipped = false;
   setPanel("info");
@@ -418,6 +428,7 @@ function scheduleMatches() {
     pendingMatches = false;
     renderMatches();
     renderSetup();
+    renderGrid();
   });
 }
 
@@ -479,8 +490,119 @@ function renderBoard(g) {
   bar.classList.toggle("none", ev == null);
   bar.firstElementChild.style.height = `${ev == null ? 50 : Math.min(100, Math.max(0, (ev / 6) * 100))}%`;
   bar.title = ev == null ? "Jev's read of the position appears after its first move" : `Jev's read: ${EVAL_LEVELS[Math.round(ev)]}`;
+  renderResultCard(g);
   return pos;
 }
+
+// The result over the board once a game is over, on its final position; a click puts it away
+const resultCard = h("button", { type: "button", class: "result-card", hidden: true, title: "Hide the result" });
+$("#board").append(resultCard);
+resultCard.addEventListener("pointerdown", (e) => e.stopPropagation()); // not a move on the board beneath
+resultCard.addEventListener("click", () => {
+  resultCard.dismissed = resultCard.game;
+  resultCard.hidden = true;
+});
+
+function renderResultCard(g) {
+  paintResult(resultCard, S.ply === null && resultCard.dismissed !== g ? g : null);
+}
+
+/** Shows game g's result in `card`, or hides the card when g is null or not over. */
+function paintResult(card, g) {
+  const o = g?.status === "done" ? outcome(g) : null;
+  if (!o) return void (card.hidden = true);
+  // Colored for the home side: you when you play, else Jev
+  const home = humanColorOf(g) || jevColorOf(g);
+  const tone = g.result === "1/2-1/2" ? "draw" : (g.result === "1-0") === (home === "w") ? "win" : "loss";
+  const fresh = card.hidden || card.game !== g;
+  card.game = g;
+  card.classList.remove("win", "loss", "draw");
+  card.classList.add(tone);
+  fill(card, h("span", { class: "score" }, g.result.replaceAll("1/2", "½")), h("b", {}, o.title), h("span", { class: "why" }, o.sub));
+  card.hidden = false;
+  if (fresh && !matchMedia("(prefers-reduced-motion: reduce)").matches) card.animate?.([{ opacity: 0, transform: "translate(-50%, -44%) scale(0.94)" }, { opacity: 1, transform: "translate(-50%, -50%) scale(1)" }], { duration: 320, easing: "cubic-bezier(0.2, 0.9, 0.3, 1.15)" });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Every board at once: with more than one game, the stage splits into a grid of boards
+// ---------------------------------------------------------------------------------------------
+const gridBox = $("#boards");
+const cells = new Map(); // game -> {cell, head, board, card, animate, dirty}
+const gridOn = () => S.mode === "arena" && S.run?.games.length > 1 && S.view === "grid";
+
+function focusGame(g) {
+  S.arenaShown = g;
+  S.view = "one";
+  S.ply = null;
+  S.flipped = false;
+  animateNext = null;
+  schedule();
+}
+
+function makeCell(g) {
+  const boardEl = h("div", { class: "board" });
+  const card = h("span", { class: "result-card", hidden: true });
+  const head = h("div", { class: "mini-head" });
+  const open = () => focusGame(g);
+  const cell = h("div", { class: "mini", role: "button", tabindex: "0", title: "Follow this game", onclick: open, onkeydown: (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), open()) }, head, boardEl);
+  const board = createBoard(boardEl, { onMove: () => {} });
+  boardEl.append(card);
+  return { cell, head, board, card, animate: null, dirty: true };
+}
+
+/** The largest square board that fits every game in the stage, and how many columns that takes. */
+function layoutGrid() {
+  const n = S.run.games.length;
+  const { width, height } = gridBox.getBoundingClientRect();
+  const gap = 14;
+  const head = 32;
+  let best = { size: 0, cols: 1 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols);
+    const size = Math.floor(Math.min((width - gap * (cols - 1)) / cols, (height - gap * (rows - 1)) / rows - head));
+    if (size > best.size) best = { size, cols };
+  }
+  gridBox.style.gridTemplateColumns = `repeat(${best.cols}, ${best.size}px)`;
+  gridBox.style.setProperty("--size", `${best.size}px`);
+}
+
+function renderGrid() {
+  const on = gridOn();
+  $(".stage").classList.toggle("grid", on);
+  app.classList.toggle("gridview", on);
+  $("#gridBtn").hidden = !(S.mode === "arena" && S.run?.games.length > 1 && S.view === "one");
+  if (!on) return;
+  const games = S.run.games;
+  for (const [g, c] of cells) if (!games.includes(g)) (c.cell.remove(), cells.delete(g));
+  games.forEach((g) => {
+    if (!cells.has(g)) cells.set(g, makeCell(g));
+    const c = cells.get(g);
+    if (c.cell.parentNode !== gridBox) gridBox.append(c.cell);
+    c.cell.classList.toggle("sel", g === S.arenaShown);
+    if (!c.dirty) return;
+    c.dirty = false;
+    const k = g.moves.length;
+    const pos = new Chess(g.fens[k]);
+    let check = null;
+    if (pos.inCheck()) for (const row of pos.board()) for (const p of row) if (p?.type === "k" && p.color === pos.turn()) check = p.square;
+    c.board.set({ fen: g.fens[k], flip: jevColorOf(g) === "b", last: g.lasts[k] || null, check, movable: null, arrows: jevArrows(g, k) }, { animate: c.animate });
+    c.animate = null;
+    // Short names ("Gemma 4 31B", not "Google: Gemma 4 31B"); the side to move pulses while it thinks
+    const turn = g.status === "running" && g.thinking ? g.thinking.color : null;
+    const side = (color) => {
+      const p = g[sideKey(color)];
+      return [h("span", { class: `side ${color}${turn === color ? (g.waiting ? " turn wait" : " turn") : ""}` }), h("span", { class: `nm ${p.kind}` }, p.name.split(": ").pop())];
+    };
+    fill(
+      c.head,
+      h("span", { class: "t", title: `${g.white.name} vs ${g.black.name}${g.waiting ? `: ${g.waiting}` : ""}` }, side("w"), h("span", { class: "vs" }, "vs"), side("b")),
+      g.status === "running" ? h("span", { class: "res", title: "Moves so far" }, Math.ceil(k / 2)) : resultBadge(g),
+    );
+    paintResult(c.card, g);
+  });
+  layoutGrid();
+}
+new ResizeObserver(() => gridOn() && layoutGrid()).observe(gridBox);
 
 function renderPlayers(g, pos) {
   const flip = isFlipped(g);
@@ -490,12 +612,14 @@ function renderPlayers(g, pos) {
     [$("#playerTop"), flip ? "w" : "b"],
     [$("#playerBottom"), flip ? "b" : "w"],
   ]) {
-    const p = g ? g[sideKey(color)] : color === "w" ? { kind: "jev", name: "Jev" } : { kind: "llm", name: "Opponent" };
+    const p = g ? g[sideKey(color)] : color === "w" ? jevSide() : { kind: "llm", name: "Opponent" }; // before a game: the route the keys give
     const stats = g ? sideStats(g, color) : { ms: null, cost: 0 };
     const lastNote = g?.moves.slice(0, k).findLast((m) => m.color === color)?.note;
     const sub =
       p.kind === "jev"
-        ? `Jev 1.13 via ${p.route === "typesafe" ? "TypeSafe" : "OpenRouter"}`
+        ? p.route
+          ? `Jev 1.13 via ${p.route === "typesafe" ? "TypeSafe" : "OpenRouter"}`
+          : "Jev 1.13: add a TypeSafe or OpenRouter key"
         : p.kind === "engine"
           ? `Stockfish 19 lite at Elo ${p.elo || p.model.split("-").pop()}`
           : p.kind === "llm"
@@ -511,7 +635,7 @@ function renderPlayers(g, pos) {
         "div",
         { class: "pstat" },
         thinking
-          ? h("span", { class: `thinking${g.waiting ? " wait" : ""}`, "data-since": g.thinking.since }, g.waiting || (p.kind === "human" ? "your move" : "thinking"))
+          ? h("span", { class: `thinking${g.waiting ? " wait" : ""}`, "data-since": g.thinking.since }, g.waiting || (p.kind === "human" ? (voice.listening ? "listening" : "your move") : "thinking"))
           : [adv > 0 && h("span", { class: "adv" }, `+${adv}`), stats.ms != null && h("span", {}, `${fmtMs(stats.ms)} avg${p.kind === "llm" || p.kind === "jev" ? ` · ${fmtCost(stats.cost)}` : ""}`)],
       ),
     );
@@ -674,6 +798,11 @@ function render() {
   renderDetail(g);
   renderGamebar(g);
   renderNav(g);
+  renderGrid();
+  // voice mode listens only on the player's own turn
+  if (voice.listening && !myTurn()) voice.rec?.abort();
+  renderVoice();
+  listenIfMyTurn();
 }
 
 function renderModels() {
@@ -771,6 +900,7 @@ function renderStats() {
   for (const el of btn.querySelectorAll(".stat")) {
     const g = S.stats.groups[el.dataset.kind];
     el.querySelector("b").textContent = rate(g);
+    el.querySelector(".n").textContent = plural(g.games, "game");
     el.classList.toggle("none", !g.games);
     el.title = tally(g);
   }
@@ -831,12 +961,117 @@ $("#statsClose").addEventListener("click", () => $("#statsDialog").close());
 // the dialog element itself, since its content fills the box
 for (const d of $$("dialog")) d.addEventListener("click", (e) => e.target === d && d.close());
 
+// ---------------------------------------------------------------------------------------------
+// Voice mode: say your move on your turn; Jev's replies are read aloud
+// ---------------------------------------------------------------------------------------------
+const Recognition = () => window.SpeechRecognition || window.webkitSpeechRecognition;
+const voice = { on: false, rec: null, listening: false, busy: false, speaking: false };
+$("#voiceBtn").hidden = !Recognition(); // Firefox has no speech recognition
+
+function setVoice(on) {
+  voice.on = on;
+  if (!on) {
+    voice.rec?.abort();
+    speechSynthesis?.cancel();
+  }
+  renderVoice();
+  listenIfMyTurn();
+}
+
+function renderVoice() {
+  const btn = $("#voiceBtn");
+  btn.setAttribute("aria-pressed", String(voice.on));
+  btn.classList.toggle("listening", voice.listening);
+  $("#voiceLabel").textContent = !voice.on ? "Voice mode: say your moves" : voice.busy ? "Working out the move…" : voice.listening ? "Listening: say your move" : "Voice mode is on";
+  $("#moveInput").placeholder = voice.listening ? "Listening…" : "Or type a move: e4, Nf3, O-O, e7e8q";
+}
+
+/** Whether the human game is waiting for the player's move, on the board they are looking at. */
+const myTurn = () => S.mode === "human" && S.human?.game.status === "running" && Boolean(S.human.game.resolve) && S.ply === null;
+
+function listenIfMyTurn() {
+  if (!voice.on || voice.listening || voice.busy || voice.speaking || !myTurn()) return;
+  const rec = new (Recognition())();
+  rec.lang = "en-US";
+  rec.interimResults = true;
+  rec.maxAlternatives = 4;
+  rec.onresult = (e) => {
+    const r = e.results[e.results.length - 1];
+    $("#moveInput").value = r[0].transcript;
+    if (r.isFinal) heard([...r].map((a) => a.transcript.trim()).filter(Boolean));
+  };
+  rec.onerror = (e) => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      toast("The microphone is blocked for this site");
+      setVoice(false);
+    }
+  };
+  rec.onend = () => {
+    voice.listening = false;
+    voice.rec = null;
+    renderVoice();
+    setTimeout(listenIfMyTurn, 250); // silence ends a turn at listening; start again while it is still yours
+  };
+  voice.rec = rec;
+  voice.listening = true;
+  renderVoice();
+  schedule();
+  try {
+    rec.start();
+  } catch {
+    voice.listening = false;
+  }
+}
+
+/** Turns what the recognizer heard into a move: an exact reading if there is one, else Jev's pick. */
+async function heard(texts) {
+  const g = S.human?.game;
+  if (!texts.length || !myTurn()) return;
+  voice.busy = true;
+  renderVoice();
+  try {
+    const legal = g.chess.moves({ verbose: true });
+    let m = texts.map((t) => spokenMove(t, legal)).find(Boolean);
+    if (!m) {
+      const { state, questions } = voiceRequest(g.chess, texts);
+      const route = jevRoute();
+      const { answers } = await askJev({ route, key: route === "typesafe" ? S.keys.typesafe : S.keys.openrouter, state, questions });
+      const pick = answers.move?.choice;
+      if (pick && pick !== "none" && (answers.move.probabilities?.[pick] ?? 0) >= 0.5) m = legal.find((x) => x.san === pick);
+    }
+    if (!myTurn() || S.human?.game !== g) return;
+    if (!m) return toast(`Heard "${texts[0]}": not a move here. Say it again`);
+    $("#moveInput").value = "";
+    onBoardMove(m.from, m.to, m.promotion);
+  } catch (e) {
+    toast(`Could not read that move: ${e.message}`);
+  } finally {
+    voice.busy = false;
+    renderVoice();
+  }
+}
+
+/** Jev's reply, read aloud in voice mode; listening starts again when it has been said. */
+function announce(san) {
+  if (!voice.on || !window.speechSynthesis) return;
+  voice.rec?.abort();
+  const u = new SpeechSynthesisUtterance(`Jev plays ${sayMove(san)}`);
+  u.lang = "en-US";
+  voice.speaking = true;
+  u.onend = u.onerror = () => {
+    voice.speaking = false;
+    listenIfMyTurn();
+  };
+  speechSynthesis.speak(u);
+}
+
 // thinking clocks tick without a full render
 setInterval(() => {
   for (const el of $$(".thinking[data-since]")) {
     if (el.classList.contains("wait")) continue;
     const s = (Date.now() - Number(el.dataset.since)) / 1000;
-    const base = el.textContent.split(" ")[0] === "your" ? "your move" : "thinking";
+    const first = el.textContent.split(" ")[0];
+    const base = first === "your" ? "your move" : first === "listening" ? "listening" : "thinking";
     el.textContent = s >= 1 ? `${base} ${s.toFixed(0)} s` : base;
   }
 }, 250);
@@ -863,6 +1098,7 @@ function setPanel(p) {
 function goto(k) {
   const g = shown();
   if (!g) return;
+  if (gridOn()) S.view = "one"; // stepping through moves needs the single board
   const n = g.moves.length;
   k = Math.max(0, Math.min(n, k));
   animateNext = S.ply !== null && k === (S.ply ?? n) + 1 ? g.lasts[k] : null;
@@ -873,8 +1109,22 @@ function goto(k) {
 function openKeys() {
   $("#orKey").value = S.keys.openrouter;
   $("#tsKey").value = S.keys.typesafe;
+  routeNote();
   $("#keysDialog").showModal();
 }
+
+/** Which way Jev will go with the keys as typed: a TypeSafe key always wins over OpenRouter. */
+function routeNote() {
+  const ts = $("#tsKey").value.trim();
+  const or = $("#orKey").value.trim();
+  $("#routeNote").textContent = ts
+    ? "Jev will run on your TypeSafe key, never through OpenRouter."
+    : or
+      ? "Jev will run through OpenRouter, as there is no TypeSafe key."
+      : "Add a key so Jev can play.";
+}
+$("#tsKey").addEventListener("input", routeNote);
+$("#orKey").addEventListener("input", routeNote);
 
 $$(".modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
 $$(".ptabs button").forEach((b) => b.addEventListener("click", () => setPanel(b.dataset.panel)));
@@ -953,6 +1203,7 @@ $("#typedMove").addEventListener("submit", (e) => {
   onBoardMove(m.from, m.to, m.promotion);
 });
 $("#resignBtn").addEventListener("click", resign);
+$("#voiceBtn").addEventListener("click", () => setVoice(!voice.on));
 $("#showArrows").addEventListener("change", (e) => {
   S.showArrows = e.target.checked;
   store.set("showArrows", S.showArrows);
@@ -960,6 +1211,12 @@ $("#showArrows").addEventListener("change", (e) => {
 });
 $("#historySearch").addEventListener("input", (e) => ((S.saved.query = e.target.value), renderHistory()));
 $("#flipBtn").addEventListener("click", () => ((S.flipped = !S.flipped), schedule()));
+$("#gridBtn").addEventListener("click", () => {
+  S.view = "grid";
+  S.ply = null;
+  for (const c of cells.values()) c.dirty = true;
+  schedule();
+});
 $$("[data-nav]").forEach((b) =>
   b.addEventListener("click", () => {
     const g = shown();
@@ -972,6 +1229,7 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, dialog") || e.metaKey || e.ctrlKey || e.altKey) return;
   const g = shown();
   if (e.key === "f") return (S.flipped = !S.flipped), schedule();
+  if (e.key === "v" && S.mode === "human" && Recognition()) return setVoice(!voice.on);
   if (!g) return;
   const k = viewPly(g);
   const to = { ArrowLeft: k - 1, ArrowRight: k + 1, Home: 0, End: g.moves.length }[e.key];
