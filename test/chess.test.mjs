@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import { Chess, annotateMoves, parseMove, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, gameEnd, pgnOf, JEV } from "../docs/chess-ai.js";
+import { Chess, annotateMoves, positionState, parseMove, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, gameEnd, pgnOf, JEV } from "../docs/chess-ai.js";
 import { cleanGame } from "../server.mjs";
 
 const play = (...sans) => {
@@ -37,6 +37,12 @@ test("describes mate, forks, blunders and threats in words", () => {
   const fen = fork.fen();
   annotateMoves(fork);
   assert.equal(fork.fen(), fen); // every tried move is taken back
+});
+
+test("lists the pieces under threat in the position to move", () => {
+  assert.equal(positionState(play("e4", "e5", "Nf3")).your_pieces_under_threat, "pawn on e5");
+  assert.equal(positionState(play("e4", "e5", "Nf3", "Nc6")).your_pieces_under_threat, "none");
+  assert.equal(positionState(new Chess()).your_pieces_under_threat, "none");
 });
 
 test("reads a move out of a reply", () => {
@@ -148,6 +154,8 @@ test("only legal captures count: pins hold, en passant takes", () => {
   assert.doesNotMatch(textOf(play("e4", "e5", "Nf3", "Nc6", "Bb5", "d6"), "b4"), /pawn on b4 is attacked and undefended/);
   // after e5, d5 can be taken en passant
   assert.match(textOf(play("e4", "a6", "e5"), "d5"), /pawn on d5 is attacked but defended/);
+  // here the pawn taken en passant cannot be won back: c3 guards d4, not d3 where the capturer lands
+  assert.match(textOf(new Chess("7k/8/8/8/4p3/2P5/3P4/K7 w - - 0 1"), "d4"), /undefended.* Likely loses 1 point of material/);
 });
 
 test("a game that ends is reported before the pause", async () => {

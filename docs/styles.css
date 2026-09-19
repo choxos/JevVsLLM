@@ -405,7 +405,7 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
   .stage > * { --size: min(calc(100cqh - 112px), calc(100cqw - 22px)); }
   .icon-btn { width: 28px; height: 28px; }
 }
-@media (max-width: 760px) and (orientation: portrait) {
+@media (max-width: 760px) and (orientation: portrait), (max-width: 520px) {
   body { font-size: 14px; }
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); grid-template-areas: "top" "stage" "tabs" "panel"; gap: 8px; padding: 8px 10px 10px; }
   .top { flex-wrap: wrap; gap: 8px; }

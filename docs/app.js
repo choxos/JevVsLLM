@@ -356,8 +356,9 @@ function onBoardMove(from, to, promotion) {
 // Saved games
 // ---------------------------------------------------------------------------------------------
 async function loadSaved() {
-  if (S.saved.loading) return;
+  if (S.saved.loading) return void (S.saved.again = true); // a save landed mid-load: fetch once more after
   S.saved.loading = true;
+  S.saved.again = false;
   try {
     const r = await fetch("api/games?limit=500");
     if (!r.ok) throw new Error(r.statusText);
@@ -368,6 +369,7 @@ async function loadSaved() {
     S.saved.error = "Saved games are not available here.";
   }
   S.saved.loading = false;
+  if (S.saved.again) return loadSaved();
   renderHistory();
 }
 
@@ -749,14 +751,16 @@ const KINDS = [
 const rate = (r) => (r.games ? `${Math.round((r.won / r.games) * 100)}%` : "none");
 const tally = (r) => `${plural(r.games, "game")}: ${r.won} won, ${r.drawn} drawn, ${r.lost} lost`;
 
+let statsSeq = 0;
 async function loadStats() {
+  const seq = ++statsSeq; // saves overlap: only the latest answer counts
+  let stats = null;
   try {
     const r = await fetch("api/stats");
-    if (!r.ok) throw new Error(r.statusText);
-    S.stats = await r.json();
-  } catch {
-    S.stats = null;
-  }
+    if (r.ok) stats = await r.json();
+  } catch {}
+  if (seq !== statsSeq) return;
+  S.stats = stats;
   renderStats();
 }
 
@@ -841,6 +845,7 @@ setInterval(() => {
 // Controls
 // ---------------------------------------------------------------------------------------------
 function setMode(mode) {
+  if (mode !== "history") openSeq++; // a saved game still loading must not take over another mode
   S.mode = mode;
   S.ply = null;
   S.flipped = false;

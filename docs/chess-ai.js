@@ -56,13 +56,13 @@ const takenFrom = (r) => (r.flags.includes("e") ? r.to[0] + r.from[1] : r.to);
 /** The legal captures of the piece on `sq`, cheapest capturing piece first. */
 const takersOf = (replies, sq) => replies.filter((r) => r.captured && takenFrom(r) === sq).sort((a, b) => (VALUES[a.piece] || 99) - (VALUES[b.piece] || 99));
 
-/** The other side's legal moves as if it were its turn, or null when that position cannot be set up. */
-function repliesOf(chess) {
+/** The position with the other side to move, to list its threats; null when that cannot be set up. */
+function theirTurn(chess) {
   const f = chess.fen().split(" ");
   f[1] = other(f[1]);
   f[3] = "-";
   try {
-    return new Chess(f.join(" ")).moves({ verbose: true });
+    return new Chess(f.join(" "));
   } catch {
     return null;
   }
@@ -70,20 +70,32 @@ function repliesOf(chess) {
 
 /**
  * Pieces of `color` (not the king) that the other side can win with a legal capture: undefended,
- * or taken by something cheaper. `replies` are the other side's legal moves; without them,
- * attacks are counted as the pieces stand, pins included.
+ * or taken by something cheaper. `replies` are the other side's legal moves in `chess`, where it is
+ * the other side's turn; without them, attacks are counted as the pieces stand, pins included.
  */
 function loosePieces(chess, color, replies) {
-  const cheapestTaker = (sq) => {
-    const values = replies ? takersOf(replies, sq).map((r) => VALUES[r.piece] || 99) : chess.attackers(sq, other(color)).map((s) => VALUES[chess.get(s).type] || 99);
-    return values.length ? Math.min(...values) : null;
-  };
   return squares(chess, color)
     .filter((p) => p.type !== "k")
     .filter((p) => {
-      const cheapest = cheapestTaker(p.square);
-      return cheapest !== null && (!chess.attackers(p.square, color).length || cheapest < VALUES[p.type]);
+      if (replies) {
+        const takers = takersOf(replies, p.square);
+        return Boolean(takers.length) && ((VALUES[takers[0].piece] || 99) < VALUES[p.type] || !canRetake(chess, takers[0], color));
+      }
+      const attackers = chess.attackers(p.square, other(color));
+      if (!attackers.length) return false;
+      const cheapest = Math.min(...attackers.map((s) => VALUES[chess.get(s).type] || 99));
+      return !chess.attackers(p.square, color).length || cheapest < VALUES[p.type];
     });
+}
+
+/** Whether `color` could take back after the capture `r`: on the square the capturer lands on, which en passant moves off the taken pawn's square. */
+function canRetake(chess, r, color) {
+  chess.move({ from: r.from, to: r.to, promotion: r.promotion });
+  try {
+    return chess.attackers(r.to, color).length > 0;
+  } finally {
+    chess.undo();
+  }
 }
 
 /** What one legal move does, in plain words. `chess` is left as it was. */
@@ -115,7 +127,7 @@ export function describeMove(chess, m) {
       const takers = takersOf(replies, m.to);
       const cheapest = VALUES[takers[0]?.piece] || 99;
       if (!takers.length) parts.push(`${name} cannot be taken.`);
-      else if (!chess.attackers(m.to, us).length) {
+      else if (!canRetake(chess, takers[0], us)) {
         parts.push(`${name} is attacked and undefended: it can be taken for free.`);
         net -= VALUES[type];
       } else if (cheapest < VALUES[type]) {
@@ -176,7 +188,8 @@ export function moveText(sans, plies = 80) {
 /** The position as the player to move sees it. */
 export function positionState(chess) {
   const us = chess.turn();
-  const loose = loosePieces(chess, us, repliesOf(chess));
+  const theirs = theirTurn(chess);
+  const loose = theirs ? loosePieces(theirs, us, theirs.moves({ verbose: true })) : loosePieces(chess, us);
   const history = chess.history();
   return {
     game: "Chess, standard rules",
