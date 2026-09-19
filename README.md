@@ -30,7 +30,8 @@ TypeSafe key works for Jev as well.
 * **Saved games.** Every finished game, with Jev's record over all of them. Replay any game move by
   move, copy its PGN, or share a link to it.
 
-When a game ends, its board shows the winner or the draw. The header keeps Jev's win rate over
+Each side has a chess clock counting the time it has used, which runs while that side thinks. When
+a game ends, its board shows the winner or the draw. The header keeps Jev's win rate over
 every saved game against humans, LLMs and engines, with the number of games; click it for the
 record against each LLM and each Stockfish level.
 

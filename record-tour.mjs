@@ -238,7 +238,11 @@ try {
   await page.evaluate(() => window.__overlays(true));
   await beat(3400);
   await press(page.locator('[data-nav="end"]'));
-  await beat(600);
+  await caption("Each side's clock shows the time it has used, like a real game: Jev's hardly moves.");
+  await to(page.locator("#playerBottom .clock"), 700);
+  await beat(1400);
+  await to(page.locator("#playerTop .clock"), 700);
+  await beat(2200);
 
   // 6. The LLM's side
   await press(page.locator("#matches .match").nth(1));

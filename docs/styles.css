@@ -257,7 +257,7 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .evalbar.none { visibility: hidden; }
 
 .player {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px;
   height: 46px; padding: 0 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
 }
 .player.turn { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -281,6 +281,17 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 @keyframes pulse { 50% { opacity: 0.25; transform: scale(0.7); } }
 
 .navbar { display: flex; align-items: center; justify-content: center; gap: 2px; }
+
+/* Chess clocks: time used, counting up; the side to move's clock runs, lit */
+.clock {
+  min-width: 78px; padding: 6px 10px; border-radius: 8px; text-align: right;
+  font: 700 16px/1 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+}
+.clock.running { background: var(--text); color: var(--bg); border-color: var(--text); }
+.mini-head .clocks { display: inline-flex; gap: 4px; flex: none; }
+.mclock { padding: 2px 5px; border-radius: 5px; font: 650 11px/1.2 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.mclock.running { background: var(--text); color: var(--bg); border-color: var(--text); }
 
 /* Every board at once */
 .boards { display: none; }
@@ -460,6 +471,7 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
   .stage { container-type: inline-size; gap: 6px; }
   .stage > * { --size: max(150px, min(calc(100cqw - 22px), calc(100dvh - 400px))); }
   .player { height: 36px; padding: 0 8px; }
+  .clock { min-width: 64px; padding: 4px 7px; font-size: 13px; }
   .avatar { width: 26px; height: 26px; font-size: 11px; }
   .who .sub { display: none; }
   .navbar .icon-btn { width: 30px; height: 26px; }

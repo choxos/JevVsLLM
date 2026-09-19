@@ -70,6 +70,32 @@ const fmtMs = (ms) => (ms == null ? "" : ms < 1000 ? `${Math.round(ms)} ms` : `$
 const fmtCost = (c) => (!c ? "free" : c < 0.01 ? `$${c.toFixed(4)}` : `$${c.toFixed(2)}`);
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
+/** A chess clock's face for time used: 0:07.3, 12:04.0, 1:02:09. */
+function fmtClock(ms) {
+  const tenths = Math.floor(ms / 100);
+  const s = Math.floor(tenths / 10);
+  const [h, m, ss] = [Math.floor(s / 3600), Math.floor((s % 3600) / 60), String(s % 60).padStart(2, "0")];
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}.${tenths % 10}`;
+}
+
+/**
+ * The time `color` has used over the first k half-moves, like a chess clock counting up; while it
+ * is that side's turn in a live game, `since` says when its clock started running.
+ */
+function clockOf(g, color, k) {
+  let used = 0;
+  for (let i = 0; i < k; i++) if (g.moves[i].color === color) used += g.moves[i].ms || 0;
+  const running = k === g.moves.length && g.status === "running" && g.thinking?.color === color;
+  return { used, since: running ? g.thinking.since : null };
+}
+
+/** A clock element; a running one is advanced by the ticker below without a full render. */
+function clockEl(g, color, k, cls = "clock") {
+  const { used, since } = g ? clockOf(g, color, k) : { used: 0, since: null };
+  const now = since ? used + Date.now() - since : used;
+  return h("span", { class: `${cls}${since ? " running" : ""}`, "data-used": since ? used : null, "data-since": since, title: `${COLOR[color]}'s time so far` }, fmtClock(now));
+}
+
 function toast(text) {
   const t = $("#toast");
   t.textContent = text;
@@ -596,7 +622,8 @@ function renderGrid() {
     fill(
       c.head,
       h("span", { class: "t", title: `${g.white.name} vs ${g.black.name}${g.waiting ? `: ${g.waiting}` : ""}` }, side("w"), h("span", { class: "vs" }, "vs"), side("b")),
-      g.status === "running" ? h("span", { class: "res", title: "Moves so far" }, Math.ceil(k / 2)) : resultBadge(g),
+      h("span", { class: "clocks" }, clockEl(g, "w", k, "mclock"), clockEl(g, "b", k, "mclock")),
+      g.status === "running" ? null : resultBadge(g),
     );
     paintResult(c.card, g);
   });
@@ -638,6 +665,7 @@ function renderPlayers(g, pos) {
           ? h("span", { class: `thinking${g.waiting ? " wait" : ""}`, "data-since": g.thinking.since }, g.waiting || (p.kind === "human" ? (voice.listening ? "listening" : "your move") : "thinking"))
           : [adv > 0 && h("span", { class: "adv" }, `+${adv}`), stats.ms != null && h("span", {}, `${fmtMs(stats.ms)} avg${p.kind === "llm" || p.kind === "jev" ? ` · ${fmtCost(stats.cost)}` : ""}`)],
       ),
+      clockEl(g, color, k),
     );
   }
 }
@@ -1092,15 +1120,10 @@ function announce(san) {
 }
 
 // thinking clocks tick without a full render
+// running clocks tick without a full render
 setInterval(() => {
-  for (const el of $$(".thinking[data-since]")) {
-    if (el.classList.contains("wait")) continue;
-    const s = (Date.now() - Number(el.dataset.since)) / 1000;
-    const first = el.textContent.split(" ")[0];
-    const base = first === "your" ? "your move" : first === "listening" ? "listening" : "thinking";
-    el.textContent = s >= 1 ? `${base} ${s.toFixed(0)} s` : base;
-  }
-}, 250);
+  for (const el of $$(".running[data-since]")) el.textContent = fmtClock(Number(el.dataset.used) + Date.now() - Number(el.dataset.since));
+}, 100);
 
 // ---------------------------------------------------------------------------------------------
 // Controls
