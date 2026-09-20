@@ -126,6 +126,21 @@ test("an LLM gets a second chance, then a random legal move", async (t) => {
   assert.ok(Math.abs(random.cost - 0.003) < 1e-9);
 });
 
+test("a model that can be held to a schema answers with JSON", async (t) => {
+  const seen = [];
+  const answer = { choices: [{ message: { content: '{"idea":"Take the center.","move":"e4"}' } }], usage: { cost: 0 } };
+  t.mock.method(globalThis, "fetch", fakeFetch([answer], seen));
+  const out = await llmPlayer({ key: "k", model: "x/y", structured: true }).move(new Chess());
+  assert.deepEqual([out.san, out.note, out.tries], ["e4", "Take the center.", 1]);
+  const schema = seen[0].body.response_format.json_schema.schema;
+  assert.equal(schema.properties.move.enum.length, 20); // one of the legal moves, and nothing else
+  assert.ok(schema.properties.move.enum.includes("e4"));
+
+  // a model that ignores the schema still gets read the old way
+  t.mock.method(globalThis, "fetch", fakeFetch([{ choices: [{ message: { content: "I play d4.\nMOVE: d4" } }], usage: {} }], []));
+  assert.equal((await llmPlayer({ key: "k", model: "x/y", structured: true }).move(new Chess())).san, "d4");
+});
+
 test("Stockfish finds the mate", async () => {
   const bin = fileURLToPath(new URL("../docs/vendor/stockfish/stockfish-19-lite-single.js", import.meta.url));
   const open = () => {

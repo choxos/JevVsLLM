@@ -76,10 +76,22 @@ A move costs one request of about 3,000 input tokens and takes about 300 ms. At 
 input tokens, a whole game costs Jev well under a cent.
 
 **LLMs get the same facts.** An LLM opponent receives the same position and the same described list
-of legal moves through OpenRouter's chat completions, and answers with a short idea and a line
-`MOVE: <move>`. If a reply names no legal move, the model is told so and asked again; after three
-tries a random legal move is played and counted, so a confused model cannot stall the game. The idea
-it gave is shown beside its moves.
+of legal moves through OpenRouter's chat completions. Models that support a schema are asked for
+JSON whose move must be one of the legal moves, so they cannot answer with an illegal one; the rest
+answer with a short idea and a line `MOVE: <move>`. If a reply names no legal move, the model is
+told so and asked again; after three tries a random legal move is played and counted, so a confused
+model cannot stall the game. The idea it gave is shown beside its moves.
+
+**Why the moves are described at length.** A shorter wording of the same facts ("bishop d3>f5;
+hangs, taken for free; loses 3") costs 14% fewer tokens, but over six games each against Stockfish
+1320, judged move by move by a full strength Stockfish, Jev lost 115 centipawns a move with the
+full wording against 125 with the short one, and blundered on 26 moves against 34. The gap is
+within the noise, but it points one way and a game only costs Jev about $0.004, so the full wording
+stays. `test/ab.mjs` runs that comparison again after any change to what the models read:
+
+```sh
+TYPESAFE_API_KEY=... STYLE=short GAMES=6 node test/ab.mjs
+```
 
 **Stockfish** is the classic chess engine, the "computer" of chess programs. The lite single
 threaded WebAssembly build of Stockfish 19 runs in your browser with its strength limited through
@@ -147,6 +159,7 @@ docs/pieces/            cburnett pieces by Colin M.L. Burnett (CC BY-SA 3.0), as
 server.mjs              static files, the TypeSafe relay, saved games and Jev's record
 test/                   node --test suite and the live game script
 record-tour.mjs         records documentation/tour.mp4, tour.gif and screenshot.jpg
+test/ab.mjs             scores Jev's moves against a full strength Stockfish, to compare wordings
 ```
 
 Inspired by [jev-tetris](https://github.com/trungdq88/jev-tetris), where Jev plays Tetris against

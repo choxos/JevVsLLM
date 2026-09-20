@@ -144,7 +144,7 @@ function replay(g, moves) {
 
 function playerFor(side, signal, game) {
   if (side.kind === "jev") return jevPlayer({ route: side.route, key: side.route === "typesafe" ? S.keys.typesafe : side.route === "openrouter" ? S.keys.openrouter : "" });
-  if (side.kind === "llm") return llmPlayer({ key: llmKey(), model: side.model, reasoning: side.reasoning });
+  if (side.kind === "llm") return llmPlayer({ key: llmKey(), model: side.model, reasoning: side.reasoning, structured: side.structured });
   if (side.kind === "engine") {
     return stockfishPlayer({
       elo: side.elo,
@@ -250,7 +250,7 @@ function opponents() {
   const engines = [...S.elos].sort((a, b) => a - b).map((elo) => ({ kind: "engine", name: `Stockfish ${elo}`, model: `stockfish-19-elo-${elo}`, elo }));
   const llms = [...S.picks].map((id) => {
     const m = S.models?.find((x) => x.id === id);
-    return { kind: "llm", name: m?.name || id, model: id, reasoning: Boolean(m?.reasoning) };
+    return { kind: "llm", name: m?.name || id, model: id, reasoning: Boolean(m?.reasoning), structured: Boolean(m?.structured) };
   });
   return [...engines, ...llms];
 }
@@ -1341,6 +1341,7 @@ async function loadModels() {
           free,
           price: pIn < 0 || pOut < 0 ? "varies" : `$${fmt(pIn)} / $${fmt(pOut)}`,
           reasoning: (m.supported_parameters || []).includes("reasoning"),
+          structured: (m.supported_parameters || []).includes("structured_outputs"),
           search: `${m.name} ${m.id}`.toLowerCase(),
         };
       });

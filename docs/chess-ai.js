@@ -105,63 +105,111 @@ function canRetake(chess, r, color) {
   }
 }
 
-/** What one legal move does, in plain words. `chess` is left as it was. */
-export function describeMove(chess, m) {
+/**
+ * What one legal move does, as facts. `chess` is left as it was. Both wordings below are built
+ * from these, so the model always reads the same judgment, only shorter or longer.
+ */
+function moveFacts(chess, m) {
   const us = m.color;
   const them = other(us);
-  const parts = [];
-  if (m.flags.includes("k")) parts.push("Castles kingside.");
-  else if (m.flags.includes("q")) parts.push("Castles queenside.");
-  else parts.push(`${cap(NAMES[m.piece])} from ${m.from} to ${m.to}.`);
-  if (m.captured) parts.push(`Captures a ${NAMES[m.captured]} (worth ${VALUES[m.captured]}).`);
-  if (m.promotion) parts.push(`Promotes to a ${NAMES[m.promotion]}.`);
-
+  const f = { piece: m.piece, from: m.from, to: m.to, castle: m.flags.includes("k") ? "kingside" : m.flags.includes("q") ? "queenside" : "", captured: m.captured || "", promotion: m.promotion || "", net: (VALUES[m.captured] || 0) + (m.promotion ? VALUES[m.promotion] - 1 : 0), threats: [], loose: [] };
   chess.move(m.san);
   try {
-    if (chess.isCheckmate()) return [...parts, "Checkmate: wins the game at once."].join(" ");
-    if (chess.isStalemate()) parts.push("Stalemate: the game ends in a draw.");
-    else if (chess.isDraw()) parts.push("The game ends in a draw.");
-    if (chess.inCheck()) parts.push("Gives check.");
+    f.mate = chess.isCheckmate();
+    if (f.mate) return f;
+    f.stalemate = chess.isStalemate();
+    f.draw = !f.stalemate && chess.isDraw();
+    f.check = chess.inCheck();
 
     // The opponent's legal answers: what it can take (en passant included) and whether it can mate
     const replies = chess.moves({ verbose: true });
-
-    // What the move gains in material, less what it likely gives back to the cheapest recapture
-    let net = (VALUES[m.captured] || 0) + (m.promotion ? VALUES[m.promotion] - 1 : 0);
     const type = m.promotion || m.piece;
+    f.type = type;
     if (type !== "k") {
-      const name = `The ${NAMES[type]} on ${m.to}`;
       const takers = takersOf(replies, m.to);
       const cheapest = VALUES[takers[0]?.piece] || 99;
-      if (!takers.length) parts.push(`${name} cannot be taken.`);
+      if (!takers.length) f.safety = "safe";
       else if (!canRetake(chess, takers[0], us)) {
-        parts.push(`${name} is attacked and undefended: it can be taken for free.`);
-        net -= VALUES[type];
+        f.safety = "free";
+        f.net -= VALUES[type];
       } else if (cheapest < VALUES[type]) {
-        parts.push(`${name} can be taken by a cheaper ${NAMES[takers[0].piece]}.`);
-        net -= VALUES[type] - cheapest;
-      } else parts.push(`${name} is attacked but defended.`);
+        f.safety = "cheaper";
+        f.taker = takers[0].piece;
+        f.net -= VALUES[type] - cheapest;
+      } else f.safety = "defended";
 
-      const targets = squares(chess, them).filter(
+      f.threats = squares(chess, them).filter(
         (p) => p.type !== "k" && chess.attackers(p.square, us).includes(m.to) && (!chess.attackers(p.square, them).length || VALUES[p.type] > VALUES[type]),
       );
-      if (targets.length) parts.push(`Threatens ${list(targets.map((p) => `the ${NAMES[p.type]} on ${p.square}`))}.`);
     }
-
-    const points = (n) => `${n} point${n > 1 ? "s" : ""} of material`;
-    if (net > 0) parts.push(`Likely wins ${points(net)}.`);
-    else if (net < 0) parts.push(`Likely loses ${points(-net)} when the opponent takes.`);
-    else if (m.captured) parts.push("An even trade.");
-
-    const loose = loosePieces(chess, us, replies).filter((p) => p.square !== m.to);
-    if (loose.length) parts.push(`Leaves ${list(loose.map((p) => `the ${NAMES[p.type]} on ${p.square}`))} open to capture.`);
-    const mate = replies.find((r) => r.san.endsWith("#"));
-    if (mate) parts.push(`Allows ${COLOR[them]} to checkmate at once with ${mate.san}.`);
-    parts.push(materialWords(chess, us));
+    f.loose = loosePieces(chess, us, replies).filter((p) => p.square !== m.to);
+    f.allowsMate = replies.find((r) => r.san.endsWith("#"))?.san || "";
+    f.after = materialWords(chess, us);
   } finally {
     chess.undo();
   }
+  return f;
+}
+
+const where = (p) => `the ${NAMES[p.type]} on ${p.square}`;
+
+/** The facts in full sentences. */
+function fullWords(f, them) {
+  const parts = [f.castle ? `Castles ${f.castle}.` : `${cap(NAMES[f.piece])} from ${f.from} to ${f.to}.`];
+  if (f.captured) parts.push(`Captures a ${NAMES[f.captured]} (worth ${VALUES[f.captured]}).`);
+  if (f.promotion) parts.push(`Promotes to a ${NAMES[f.promotion]}.`);
+  if (f.mate) return [...parts, "Checkmate: wins the game at once."].join(" ");
+  if (f.stalemate) parts.push("Stalemate: the game ends in a draw.");
+  else if (f.draw) parts.push("The game ends in a draw.");
+  if (f.check) parts.push("Gives check.");
+  const name = `The ${NAMES[f.type]} on ${f.to}`;
+  if (f.safety === "safe") parts.push(`${name} cannot be taken.`);
+  else if (f.safety === "free") parts.push(`${name} is attacked and undefended: it can be taken for free.`);
+  else if (f.safety === "cheaper") parts.push(`${name} can be taken by a cheaper ${NAMES[f.taker]}.`);
+  else if (f.safety === "defended") parts.push(`${name} is attacked but defended.`);
+  if (f.threats.length) parts.push(`Threatens ${list(f.threats.map(where))}.`);
+  const points = (n) => `${n} point${n > 1 ? "s" : ""} of material`;
+  if (f.net > 0) parts.push(`Likely wins ${points(f.net)}.`);
+  else if (f.net < 0) parts.push(`Likely loses ${points(-f.net)} when the opponent takes.`);
+  else if (f.captured) parts.push("An even trade.");
+  if (f.loose.length) parts.push(`Leaves ${list(f.loose.map(where))} open to capture.`);
+  if (f.allowsMate) parts.push(`Allows ${COLOR[them]} to checkmate at once with ${f.allowsMate}.`);
   return parts.join(" ");
+}
+
+/** The same facts in about a third of the words. */
+function shortWords(f) {
+  const spot = (p) => `${NAMES[p.type]} ${p.square}`;
+  const parts = [f.castle ? `castles ${f.castle}` : `${NAMES[f.piece]} ${f.from}>${f.to}`];
+  if (f.captured) parts.push(`takes ${NAMES[f.captured]}(${VALUES[f.captured]})`);
+  if (f.promotion) parts.push(`promotes ${NAMES[f.promotion]}`);
+  if (f.mate) return [...parts, "CHECKMATE, wins now"].join("; ");
+  if (f.stalemate) parts.push("stalemate, draw");
+  else if (f.draw) parts.push("draw");
+  if (f.check) parts.push("check");
+  if (f.safety === "safe") parts.push("safe");
+  else if (f.safety === "free") parts.push("hangs, taken for free");
+  else if (f.safety === "cheaper") parts.push(`taken by a cheaper ${NAMES[f.taker]}`);
+  else if (f.safety === "defended") parts.push("attacked but defended");
+  if (f.threats.length) parts.push(`threatens ${f.threats.map(spot).join(", ")}`);
+  if (f.net > 0) parts.push(`wins ${f.net}`);
+  else if (f.net < 0) parts.push(`loses ${-f.net}`);
+  else if (f.captured) parts.push("even trade");
+  if (f.loose.length) parts.push(`leaves ${f.loose.map(spot).join(", ")} open`);
+  if (f.allowsMate) parts.push(`ALLOWS MATE ${f.allowsMate}`);
+  return parts.join("; ");
+}
+
+/**
+ * How moves are written for the models: "full" sentences, or "short", which says the same in about
+ * a third of the tokens. STYLE is what the page and the server use; the A/B harness sets it.
+ */
+export const STYLE = { moves: "full" };
+
+/** What one legal move does, in words. `chess` is left as it was. */
+export function describeMove(chess, m, style = STYLE.moves) {
+  const f = moveFacts(chess, m);
+  return style === "short" ? shortWords(f) : fullWords(f, other(m.color));
 }
 
 /** Every legal move with its description, in chess.js order. */
@@ -362,11 +410,13 @@ export function jevPlayer({ route, key, base }) {
 // ---------------------------------------------------------------------------------------------
 // LLMs through OpenRouter's chat completions
 // ---------------------------------------------------------------------------------------------
-export function llmMessages(chess, moves) {
+export function llmMessages(chess, moves, structured = false) {
   const s = positionState(chess);
   const system = [
     `You are playing chess as ${s.you_play} against Jev, another AI. Each turn you get the position and every legal move, with notes about what each move does that code computed for you.`,
-    'Pick exactly one move from the list. Answer with one short sentence about your idea, then a last line in exactly this form: "MOVE: <move in SAN as written in the list>", for example "MOVE: Nf3".',
+    structured
+      ? "Pick exactly one move from the list. Answer as JSON: move is the move in SAN exactly as the list writes it, idea is at most twelve words on why."
+      : 'Pick exactly one move from the list. Answer with one short sentence about your idea, at most twelve words, then a last line in exactly this form: "MOVE: <move in SAN as written in the list>", for example "MOVE: Nf3".',
   ].join("\n");
   const user = [
     `You play ${s.you_play}. It is your move.`,
@@ -413,9 +463,28 @@ export function parseMove(text, legal) {
 
 /** An LLM's move. With no key of the visitor's own, it goes through this site's relay, which lends
  * the site's key for free models. */
-export async function askLLM({ key, model, messages, signal, reasoning, base = "" }) {
+/**
+ * An LLM's move. `choices` asks the model for JSON whose move is one of those exact strings, which
+ * models that support it cannot break, so no answer has to be sent back for a second try.
+ */
+export async function askLLM({ key, model, messages, signal, reasoning, choices, base = "" }) {
   const body = { model, messages, usage: { include: true } };
   if (reasoning) body.reasoning = { effort: "low" };
+  if (choices?.length) {
+    body.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: "chess_move",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: { idea: { type: "string", description: "At most twelve words on why." }, move: { type: "string", enum: choices } },
+          required: ["idea", "move"],
+          additionalProperties: false,
+        },
+      },
+    };
+  }
   const data = await postJson(key ? `${OPENROUTER}/api/v1/chat/completions` : `${base}/v1/openrouter/chat`, key, body, signal, { "X-Title": "Jev Chess" });
   const msg = data.choices?.[0]?.message || {};
   const content = typeof msg.content === "string" ? msg.content : Array.isArray(msg.content) ? msg.content.map((c) => c.text || "").join("") : "";
@@ -426,6 +495,17 @@ export async function askLLM({ key, model, messages, signal, reasoning, base = "
   };
 }
 
+/** The move and the idea in a JSON answer, or null when it is not JSON after all. */
+function fromJson(text, legal) {
+  try {
+    const { move, idea } = JSON.parse(String(text).trim().replace(/^```(?:json)?|```$/g, ""));
+    const m = legal.find((x) => x.san === move);
+    return m ? { move: m, note: String(idea || "").slice(0, 280) } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The first sentence or so of a reply, without its MOVE line, for display. */
 const noteOf = (text) =>
   String(text || "")
@@ -434,12 +514,14 @@ const noteOf = (text) =>
     .trim()
     .slice(0, 280);
 
-export function llmPlayer({ key, model, reasoning = false, random = Math.random, base = "" }) {
+export function llmPlayer({ key, model, reasoning = false, structured = false, random = Math.random, base = "" }) {
   return {
     async move(chess, { signal, onWait } = {}) {
       const legal = chess.moves({ verbose: true });
       const moves = annotateMoves(chess);
-      const messages = llmMessages(chess, moves);
+      // a very long list of options is left to plain text: some providers balk at a huge enum
+      let choices = structured && legal.length <= 120 ? moves.map((m) => m.san) : null;
+      const messages = llmMessages(chess, moves, Boolean(choices));
       let tokens = 0;
       let cost = 0;
       let note = "";
@@ -448,14 +530,23 @@ export function llmPlayer({ key, model, reasoning = false, random = Math.random,
         const timeout = AbortSignal.timeout(LLM_TIMEOUT_MS);
         let reply;
         try {
-          reply = await withRetry(() => askLLM({ key, model, messages, reasoning, base, signal: signal ? AbortSignal.any([signal, timeout]) : timeout }), { signal, onWait });
+          reply = await withRetry(() => askLLM({ key, model, messages, reasoning, choices, base, signal: signal ? AbortSignal.any([signal, timeout]) : timeout }), { signal, onWait });
         } catch (e) {
+          // a provider that turns down the schema it advertised still gets to play, in plain words
+          if (choices && e.status === 400) {
+            choices = null;
+            messages[0].content = llmMessages(chess, moves, false)[0].content;
+            tries--;
+            continue;
+          }
           if (signal?.aborted || e.name !== "TimeoutError") throw e;
           note = "No answer within two minutes.";
           continue;
         }
         tokens += reply.tokens;
         cost += reply.cost;
+        const asJson = choices && fromJson(reply.content, legal);
+        if (asJson) return { san: asJson.move.san, tokens, cost, tries: tries + 1, note: asJson.note };
         const m = parseMove(reply.content, legal);
         if (m) return { san: m.san, tokens, cost, tries: tries + 1, note: noteOf(reply.content) };
         note = reply.content ? `Unusable reply: ${noteOf(reply.content) || reply.content.slice(0, 120)}` : "Empty reply.";
