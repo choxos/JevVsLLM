@@ -322,7 +322,8 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
       const visitor = mine ? "" : visitorOf(req);
       if (!mine) {
         const stop = await borrow(visitor, url.pathname, body);
-        if (stop) return json(res, 429, { detail: stop });
+        // 402, not 429: waiting will not help, so the page says so at once instead of retrying
+        if (stop) return json(res, 402, { detail: stop });
       }
       // A page that stops a game drops its request; stop the model's too
       const gone = new AbortController();
