@@ -471,6 +471,7 @@ export async function askLLM({ key, model, messages, signal, reasoning, choices,
   const body = { model, messages, usage: { include: true } };
   if (reasoning) body.reasoning = { effort: "low" };
   if (choices?.length) {
+    body.provider = { require_parameters: true }; // only providers that honor the schema
     body.response_format = {
       type: "json_schema",
       json_schema: {
@@ -550,6 +551,13 @@ export function llmPlayer({ key, model, reasoning = false, structured = false, r
         const m = parseMove(reply.content, legal);
         if (m) return { san: m.san, tokens, cost, tries: tries + 1, note: noteOf(reply.content) };
         note = reply.content ? `Unusable reply: ${noteOf(reply.content) || reply.content.slice(0, 120)}` : "Empty reply.";
+        if (choices) {
+          // some providers answer nothing at all under a schema: ask again in plain words
+          choices = null;
+          messages.length = 0;
+          messages.push(...llmMessages(chess, moves, false));
+          continue;
+        }
         messages.push(
           { role: "assistant", content: reply.content || "(empty)" },
           { role: "user", content: 'That reply does not name a legal move. Choose one move from the "Legal moves" list and end with a line "MOVE: <move>".' },

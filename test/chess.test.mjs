@@ -139,6 +139,14 @@ test("a model that can be held to a schema answers with JSON", async (t) => {
   // a model that ignores the schema still gets read the old way
   t.mock.method(globalThis, "fetch", fakeFetch([{ choices: [{ message: { content: "I play d4.\nMOVE: d4" } }], usage: {} }], []));
   assert.equal((await llmPlayer({ key: "k", model: "x/y", structured: true }).move(new Chess())).san, "d4");
+
+  // a provider that answers nothing under the schema is asked again in plain words, not a third time
+  const again = [];
+  t.mock.method(globalThis, "fetch", fakeFetch([{ choices: [{ message: { content: "" } }], usage: {} }, { choices: [{ message: { content: "Solid.\nMOVE: d4" } }], usage: {} }], again));
+  const second = await llmPlayer({ key: "k", model: "x/y", structured: true }).move(new Chess());
+  assert.deepEqual([second.san, second.tries, second.fallback], ["d4", 2, undefined]);
+  assert.ok(again[0].body.response_format && !again[1].body.response_format);
+  assert.equal(again[1].body.messages.length, 2); // a fresh ask, not the failed one sent back
 });
 
 test("Stockfish finds the mate", async () => {
