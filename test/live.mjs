@@ -17,7 +17,7 @@ import { Chess, jevPlayer, llmPlayer, stockfishPlayer, randomPlayer, playGame, C
 const { TYPESAFE_API_KEY: ts, OPENROUTER_API_KEY: or, MODEL, ENGINE, OUT } = process.env;
 if (!ts && !or) throw new Error("Set TYPESAFE_API_KEY or OPENROUTER_API_KEY");
 const route = ts ? "typesafe" : "openrouter";
-const jev = jevPlayer({ route, key: ts || or, typesafeUrl: "https://api.typesafe.ai/v1/systemone" });
+const jev = jevPlayer({ route, key: ts || or, base: "https://api.typesafe.ai" });
 let opponent = randomPlayer();
 let side = { kind: "engine", name: "Random moves", model: "random" };
 if (ENGINE) {

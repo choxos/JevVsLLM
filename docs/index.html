@@ -150,10 +150,11 @@
   <dialog id="keysDialog" class="dialog">
     <form method="dialog" class="stack">
       <h2>API keys</h2>
+      <p class="lend" id="lendNote"></p>
       <label class="field">
         <span class="label">OpenRouter key <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">get one</a></span>
         <input id="orKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-...">
-        <small>Needed for LLM opponents; free models cost nothing, but OpenRouter caps free requests per day (a game takes 40 to 100 per side), and the cap is higher once the account has credits. Jev runs on it too when there is no TypeSafe key, but Jev is not free on OpenRouter: the key needs a little credit (a game costs well under a cent).</small>
+        <small>For LLM opponents, and for paid models, which the site's own key does not play. Free models cost nothing, but OpenRouter caps free requests per day (a game takes 40 to 100 per side). Jev runs on it too when there is no TypeSafe key, but Jev is not free on OpenRouter: the key needs a little credit (a game costs well under a cent).</small>
       </label>
       <label class="field">
         <span class="label">TypeSafe key, optional <a href="https://typesafe.ai" target="_blank" rel="noopener">typesafe.ai</a></span>
@@ -161,7 +162,7 @@
         <small>If set, Jev runs on your TypeSafe account instead of OpenRouter.</small>
       </label>
       <p class="route" id="routeNote"></p>
-      <p class="privacy">Keys stay in this browser. They go only to OpenRouter, or to TypeSafe through this site's relay (TypeSafe does not accept calls from web pages), and are never stored on the server. Saved games hold the moves, never a key.</p>
+      <p class="privacy">Keys stay in this browser. They go only to OpenRouter, or to TypeSafe through this site's relay (TypeSafe does not accept calls from web pages), and are never stored on the server. Saved games hold the moves, never a key. The site's own keys stay on its server and are never sent to this page.</p>
       <div class="row end">
         <button type="button" class="btn ghost" id="forgetKeys">Forget keys</button>
         <button type="submit" class="btn primary" id="saveKeys" value="save">Save</button>

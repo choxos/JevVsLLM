@@ -4,9 +4,10 @@ Watch **Jev**, TypeSafe's System One model, play chess against any LLM on OpenRo
 the Stockfish engine, or play Jev yourself. Every move is shown as it happens, with the moves Jev
 weighed and how likely it thought each one was, and every finished game is saved for replay.
 
-**Play it at [jevchess.xera.ac](https://jevchess.xera.ac).** Bring an OpenRouter key: its free
-models cost nothing, and Jev runs on it too (with a little credit, since Jev is not free there). A
-TypeSafe key works for Jev as well.
+**Play it at [jevchess.xera.ac](https://jevchess.xera.ac), with no key.** The site lends its own
+keys, capped per day and to free OpenRouter models. Your own key lifts the cap and plays paid
+models: an OpenRouter key runs the LLMs (and Jev, with a little credit, since Jev is not free
+there), and a TypeSafe key runs Jev.
 
 ![Jev plays Stockfish 1320 and Mercury 2.5 at once; the moves Jev weighed are drawn as arrows](documentation/tour.gif)
 
@@ -89,6 +90,9 @@ or is drawn after 100 moves each.
 ## Keys and privacy
 
 * Keys are kept in your browser's local storage and sent only to where they are used.
+* Without a key, the site's own keys are used. They live in `.env` on the server, are never sent to
+  the page, and are lent within a daily budget, a share of it per visitor, and only to free
+  OpenRouter models, so nobody can spend the site's money on a paid one.
 * With a TypeSafe key, Jev always runs on it, never through OpenRouter; without one, Jev runs
   through OpenRouter.
 * OpenRouter accepts calls from web pages, so LLM moves and Jev on OpenRouter
@@ -108,10 +112,12 @@ npm start        # http://localhost:3141
 npm test         # rules, move descriptions, reply parsing, players, Stockfish, saved games
 ```
 
-`server.mjs` serves `docs/`, relays TypeSafe calls and keeps games in `data/games.jsonl` (`GET
-/api/games`, `GET /api/games/<id>`, `GET /api/stats` for Jev's record). `PORT` and `DATA_DIR` set
-where it listens and where games go. In production nginx serves `docs/` and passes `/v1/` and
-`/api/` to it.
+`server.mjs` serves `docs/`, relays the model calls (`POST /v1/systemone`,
+`POST /v1/openrouter/chat`, `POST /v1/openrouter/jev`) and keeps games in `data/games.jsonl` (`GET
+/api/games`, `GET /api/games/<id>`, `GET /api/stats` for Jev's record, `GET /api/config` for what
+the site lends). Copy `.env.example` to `.env` to lend keys of your own and set the daily budgets.
+`PORT` and `DATA_DIR` set where it listens and where games go. In production nginx serves `docs/`
+and passes `/v1/` and `/api/` to it.
 
 The tour is recorded by `record-tour.mjs` with Google Chrome and ffmpeg (`npm install` fetches
 playwright-core for it). It plays real games, so it needs both keys, from the environment only:

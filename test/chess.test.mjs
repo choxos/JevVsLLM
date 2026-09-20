@@ -96,6 +96,12 @@ test("Jev asks one Choice over the legal moves and plays its answer", async (t) 
   assert.equal(seen[1].url, "/v1/systemone");
   assert.equal(seen[1].body.model, JEV.typesafe);
   assert.equal(fallback.cost, 1000 * JEV.pricePerToken);
+
+  // with no key of its own the page sends none: the site's relay adds the key it lends
+  t.mock.method(globalThis, "fetch", fakeFetch([{ answers: { move: { choice: "e4", probabilities: { e4: 1 } } }, usage: { input_tokens: 10 } }], seen));
+  await jevPlayer({ route: "shared", key: "" }).move(new Chess());
+  assert.equal(seen[2].url, "/v1/systemone");
+  assert.equal(seen[2].headers.Authorization, undefined);
 });
 
 test("an LLM gets a second chance, then a random legal move", async (t) => {
@@ -105,6 +111,13 @@ test("an LLM gets a second chance, then a random legal move", async (t) => {
   const out = await llmPlayer({ key: "k", model: "x/y" }).move(new Chess());
   assert.deepEqual([out.san, out.tries, out.fallback, out.note], ["e4", 2, undefined, "Fine."]);
   assert.equal(seen[1].body.messages.length, 4); // the bad reply and the correction were sent back
+
+  // without a key the move goes through the site's relay, which lends the site's key
+  const relayed = [];
+  t.mock.method(globalThis, "fetch", fakeFetch([chat("MOVE: d4")], relayed));
+  await llmPlayer({ key: "", model: "x/y" }).move(new Chess());
+  assert.equal(relayed[0].url, "/v1/openrouter/chat");
+  assert.equal(relayed[0].headers.Authorization, undefined);
 
   t.mock.method(globalThis, "fetch", fakeFetch([chat("hmm"), chat(""), chat("MOVE: Ke2")], []));
   const random = await llmPlayer({ key: "k", model: "x/y", random: () => 0 }).move(new Chess());

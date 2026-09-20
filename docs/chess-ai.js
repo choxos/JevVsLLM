@@ -290,7 +290,8 @@ async function postJson(url, key, body, signal, extra = {}) {
     r = await fetch(url, {
       method: "POST",
       signal,
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...extra },
+      // no key means the site lends its own, which its relay adds and never hands to the page
+      headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), "Content-Type": "application/json", ...extra },
       body: JSON.stringify(body),
     });
   } catch (e) {
@@ -313,25 +314,32 @@ async function postJson(url, key, body, signal, extra = {}) {
 }
 
 /**
- * One Jev call. route "openrouter" goes to OpenRouter's Decisions API from the browser; route
- * "typesafe" goes to TypeSafe through this site's relay, because TypeSafe refuses browser pages.
+ * Where a Jev request goes. A visitor's own OpenRouter key goes straight to OpenRouter; TypeSafe
+ * refuses browser pages, so its key goes through this site's relay; "shared" is the same relay
+ * with no key, where the site adds the one it lends.
  */
-export async function askJev({ route, key, state, questions, signal, typesafeUrl = "/v1/systemone" }) {
-  const openrouter = route === "openrouter";
-  const url = openrouter ? `${OPENROUTER}/api/alpha/decisions` : typesafeUrl;
-  const body = { model: openrouter ? JEV.openrouter : JEV.typesafe, state, questions };
-  const data = await postJson(url, key, body, signal, openrouter ? { "X-Title": "Jev Chess" } : {});
+export const JEV_ROUTES = {
+  typesafe: { path: "/v1/systemone", model: JEV.typesafe, keyed: true },
+  shared: { path: "/v1/systemone", model: JEV.typesafe, keyed: false },
+  openrouter: { url: `${OPENROUTER}/api/alpha/decisions`, model: JEV.openrouter, keyed: true },
+};
+
+/** One Jev call. `base` prefixes this site's own paths, for callers outside a browser page. */
+export async function askJev({ route = "typesafe", key, state, questions, signal, base = "" }) {
+  const r = JEV_ROUTES[route] || JEV_ROUTES.typesafe;
+  const url = r.url || base + r.path;
+  const data = await postJson(url, r.keyed ? key : "", { model: r.model, state, questions }, signal, r.url ? { "X-Title": "Jev Chess" } : {});
   const tokens = data.usage?.input_tokens || 0;
-  return { answers: data.answers || {}, tokens, cost: openrouter ? Number(data.usage?.cost) || 0 : tokens * JEV.pricePerToken };
+  return { answers: data.answers || {}, tokens, cost: Number(data.usage?.cost) || tokens * JEV.pricePerToken };
 }
 
-export function jevPlayer({ route, key, typesafeUrl }) {
+export function jevPlayer({ route, key, base }) {
   return {
     async move(chess, { signal, onWait } = {}) {
       const moves = annotateMoves(chess);
       const state = positionState(chess);
       const questions = jevQuestions(chess, moves);
-      const { answers, tokens, cost } = await withRetry(() => askJev({ route, key, state, questions, signal, typesafeUrl }), { signal, onWait });
+      const { answers, tokens, cost } = await withRetry(() => askJev({ route, key, state, questions, signal, base }), { signal, onWait });
       const probs = answers.move?.probabilities || {};
       const legal = new Set(moves.map((m) => m.san));
       const ranked = Object.entries(probs)
@@ -403,10 +411,12 @@ export function parseMove(text, legal) {
   return null;
 }
 
-export async function askLLM({ key, model, messages, signal, reasoning }) {
+/** An LLM's move. With no key of the visitor's own, it goes through this site's relay, which lends
+ * the site's key for free models. */
+export async function askLLM({ key, model, messages, signal, reasoning, base = "" }) {
   const body = { model, messages, usage: { include: true } };
   if (reasoning) body.reasoning = { effort: "low" };
-  const data = await postJson(`${OPENROUTER}/api/v1/chat/completions`, key, body, signal, { "X-Title": "Jev Chess" });
+  const data = await postJson(key ? `${OPENROUTER}/api/v1/chat/completions` : `${base}/v1/openrouter/chat`, key, body, signal, { "X-Title": "Jev Chess" });
   const msg = data.choices?.[0]?.message || {};
   const content = typeof msg.content === "string" ? msg.content : Array.isArray(msg.content) ? msg.content.map((c) => c.text || "").join("") : "";
   return {
@@ -424,7 +434,7 @@ const noteOf = (text) =>
     .trim()
     .slice(0, 280);
 
-export function llmPlayer({ key, model, reasoning = false, random = Math.random }) {
+export function llmPlayer({ key, model, reasoning = false, random = Math.random, base = "" }) {
   return {
     async move(chess, { signal, onWait } = {}) {
       const legal = chess.moves({ verbose: true });
@@ -438,7 +448,7 @@ export function llmPlayer({ key, model, reasoning = false, random = Math.random 
         const timeout = AbortSignal.timeout(LLM_TIMEOUT_MS);
         let reply;
         try {
-          reply = await withRetry(() => askLLM({ key, model, messages, reasoning, signal: signal ? AbortSignal.any([signal, timeout]) : timeout }), { signal, onWait });
+          reply = await withRetry(() => askLLM({ key, model, messages, reasoning, base, signal: signal ? AbortSignal.any([signal, timeout]) : timeout }), { signal, onWait });
         } catch (e) {
           if (signal?.aborted || e.name !== "TimeoutError") throw e;
           note = "No answer within two minutes.";

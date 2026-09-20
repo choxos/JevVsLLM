@@ -1,20 +1,33 @@
 /**
- * Serves the page in docs/ (nginx does that in production), relays Jev calls made with a TypeSafe
- * key, and keeps finished games.
+ * Serves the page in docs/ (nginx does that in production), relays the model calls, and keeps
+ * finished games.
  *
- *   POST /v1/systemone    passed to TypeSafe with the visitor's own key: TypeSafe refuses
- *                         requests from browser pages, OpenRouter does not, so only this route
- *                         needs a relay
- *   POST /api/games       store one finished game, after replaying every move with chess.js
- *   GET  /api/games       the latest games, newest first, without their moves
- *   GET  /api/games/<id>  one game with its moves
- *   GET  /api/stats       Jev's results against humans, LLMs and engines, and each opponent
+ *   POST /v1/systemone         Jev at TypeSafe, which refuses requests from browser pages
+ *   POST /v1/openrouter/chat   an LLM's move at OpenRouter
+ *   POST /v1/openrouter/jev    Jev at OpenRouter
+ *   GET  /api/config           whether this site lends its own keys, and what is left today
+ *   POST /api/games            store one finished game, after replaying every move with chess.js
+ *   GET  /api/games            the latest games, newest first, without their moves
+ *   GET  /api/games/<id>       one game with its moves
+ *   GET  /api/stats            Jev's results against humans, LLMs and engines, and each opponent
  *
- * API keys are never stored or logged. The relay hands the Authorization header to TypeSafe and
- * forgets it, and a saved game is rebuilt field by field from what a game needs, so nothing else
- * a page sends (a key included) can reach the disk.
+ * A visitor with a key of their own sends it, and it is passed on and forgotten. Without one, the
+ * site lends the keys in its .env, which stay on this machine: they are never sent to the page.
+ * What the site lends is capped, per day and per visitor, and only free OpenRouter models are
+ * lent, since a paid model would spend the site's money.
  *
- *   node server.mjs            PORT (default 3141) and DATA_DIR (default ./data) from the environment
+ * API keys are never stored or logged, and a saved game is rebuilt field by field from what a game
+ * needs, so nothing else a page sends (a key included) can reach the disk.
+ *
+ * Settings come from the environment or .env beside this file (see .env.example):
+ *   PORT                listening port on 127.0.0.1 (default 3141)
+ *   DATA_DIR            where games are kept (default ./data)
+ *   TYPESAFE_API_KEY    lent to visitors without a TypeSafe key
+ *   OPENROUTER_API_KEY  lent to visitors without an OpenRouter key, for free models only
+ *   DAILY_TOKEN_BUDGET  TypeSafe input tokens the site lends per UTC day (default 20 million,
+ *                       about $0.84; 0 lends none)
+ *   DAILY_LLM_BUDGET    OpenRouter requests the site lends per UTC day (default 3000)
+ *   VISITOR_SHARE       the share of a day's lending one visitor may take (default 0.25)
  */
 import http from "node:http";
 import fs from "node:fs";
@@ -26,6 +39,12 @@ import { Chess, gameEnd, PLY_CAP } from "./docs/chess-ai.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, "docs");
 const TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone";
+const OPENROUTER = "https://openrouter.ai";
+const UPSTREAM = {
+  "/v1/systemone": TYPESAFE_URL,
+  "/v1/openrouter/jev": `${OPENROUTER}/api/alpha/decisions`,
+  "/v1/openrouter/chat": `${OPENROUTER}/api/v1/chat/completions`,
+};
 const MAX_BODY = 1_000_000;
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -168,6 +187,87 @@ function readGames(file) {
     .filter(Boolean);
 }
 
+// ---------------------------------------------------------------------------------------------
+// The keys this site lends, and what it lends them for
+// ---------------------------------------------------------------------------------------------
+const lending = { typesafe: "", openrouter: "" };
+const limits = { tokens: 20_000_000, requests: 3000, share: 0.25 };
+const used = { day: "", tokens: 0, requests: 0, byVisitor: new Map() };
+const SALT = crypto.randomBytes(16); // visitors are counted by a hash that dies with the process
+let freeModels = { at: 0, ids: null }; // OpenRouter's free models, refreshed hourly
+
+export function lend({ typesafe = "", openrouter = "", tokens, requests, share } = {}) {
+  Object.assign(lending, { typesafe, openrouter });
+  if (Number.isFinite(tokens)) limits.tokens = tokens;
+  if (Number.isFinite(requests)) limits.requests = requests;
+  if (Number.isFinite(share)) limits.share = Math.min(1, Math.max(0.01, share));
+}
+
+/** Resets the day's counters at midnight UTC. */
+function day() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (used.day !== today) Object.assign(used, { day: today, tokens: 0, requests: 0, byVisitor: new Map() });
+  return used;
+}
+
+const visitorOf = (req) => crypto.createHash("sha256").update(SALT).update(String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).digest("hex").slice(0, 16);
+
+/** The ids of every OpenRouter model that costs nothing, so only those are played on the site's key. */
+async function freeIds() {
+  if (freeModels.ids && Date.now() - freeModels.at < 3600_000) return freeModels.ids;
+  try {
+    const r = await fetch(`${OPENROUTER}/api/v1/models`, { signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) throw new Error(r.statusText);
+    const { data } = await r.json();
+    freeModels = { at: Date.now(), ids: new Set(data.filter((m) => Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0).map((m) => m.id)) };
+  } catch {
+    if (!freeModels.ids) freeModels = { at: Date.now() - 3540_000, ids: new Set() }; // try again in a minute
+  }
+  return freeModels.ids;
+}
+
+/** Whether this borrowed request may go ahead; a string says why not. */
+async function borrow(visitor, pathname, body) {
+  const u = day();
+  const mine = u.byVisitor.get(visitor) || { tokens: 0, requests: 0 };
+  u.byVisitor.set(visitor, mine);
+  const typesafe = pathname === "/v1/systemone";
+  if (!typesafe && pathname === "/v1/openrouter/jev" && lending.typesafe) return "Jev costs money on OpenRouter: this site plays Jev on its TypeSafe key instead.";
+  if (typesafe) {
+    if (u.tokens >= limits.tokens) return "The site's Jev key has done its day's work. Add your own key in API keys, or come back tomorrow.";
+    if (mine.tokens >= limits.tokens * limits.share) return "You have used your share of the site's Jev key today. Add your own key in API keys to keep playing.";
+    return null;
+  }
+  if (u.requests >= limits.requests) return "The site's OpenRouter key has done its day's work. Add your own key in API keys, or come back tomorrow.";
+  if (mine.requests >= limits.requests * limits.share) return "You have used your share of the site's OpenRouter key today. Add your own key in API keys to keep playing.";
+  if (pathname === "/v1/openrouter/chat") {
+    let model = "";
+    try {
+      model = String(JSON.parse(body).model || "");
+    } catch {}
+    const free = await freeIds();
+    if (!free.has(model)) return `${model || "That model"} is not free on OpenRouter, so it needs your own key. Add one in API keys, or pick a free model.`;
+  }
+  return null;
+}
+
+/** Counts what a borrowed answer cost, so a day's lending can end. */
+function spend(pathname, out, visitor) {
+  const u = day();
+  const mine = u.byVisitor.get(visitor) || null;
+  if (pathname === "/v1/systemone") {
+    let tokens = 0;
+    try {
+      tokens = JSON.parse(out).usage?.input_tokens || 0;
+    } catch {}
+    u.tokens += tokens;
+    if (mine) mine.tokens += tokens;
+    return;
+  }
+  u.requests += 1;
+  if (mine) mine.requests += 1;
+}
+
 export function createServer({ dataDir = path.join(here, "data") } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   const file = path.join(dataDir, "games.jsonl");
@@ -193,30 +293,49 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
       if (host !== req.headers.host) return json(res, 403, { detail: "Foreign origin" });
     }
 
-    if (url.pathname === "/v1/systemone") {
+    if (UPSTREAM[url.pathname]) {
       if (req.method !== "POST") return json(res, 405, { detail: "POST only" });
-      if (!req.headers.authorization) return json(res, 401, { detail: "Add your TypeSafe key first" });
+      const jev = url.pathname !== "/v1/openrouter/chat";
+      const mine = Boolean(req.headers.authorization); // the visitor brought a key of their own
+      const lent = jev && url.pathname === "/v1/systemone" ? lending.typesafe : lending.openrouter;
+      if (!mine && !lent) return json(res, 401, { detail: `This site has no ${jev ? "TypeSafe" : "OpenRouter"} key to lend: add your own in API keys` });
       let body;
       try {
         body = await readBody(req);
       } catch {
         return json(res, 413, { detail: "Request too large" });
       }
-      // A page that stops a game drops its request; stop TypeSafe's too
+      const visitor = mine ? "" : visitorOf(req);
+      if (!mine) {
+        const stop = await borrow(visitor, url.pathname, body);
+        if (stop) return json(res, 429, { detail: stop });
+      }
+      // A page that stops a game drops its request; stop the model's too
       const gone = new AbortController();
       res.on("close", () => gone.abort());
       try {
-        const r = await fetch(TYPESAFE_URL, {
+        const r = await fetch(UPSTREAM[url.pathname], {
           method: "POST",
-          headers: { Authorization: req.headers.authorization, "Content-Type": "application/json" },
+          headers: { Authorization: mine ? req.headers.authorization : `Bearer ${lent}`, "Content-Type": "application/json", ...(jev && url.pathname !== "/v1/systemone" ? { "X-Title": "Jev Chess" } : {}) },
           body,
-          signal: AbortSignal.any([gone.signal, AbortSignal.timeout(30_000)]),
+          signal: AbortSignal.any([gone.signal, AbortSignal.timeout(120_000)]),
         });
+        const out = Buffer.from(await r.arrayBuffer());
+        if (!mine && r.ok) spend(url.pathname, out, visitor);
         const retry = r.headers.get("retry-after");
-        return send(res, r.status, r.headers.get("content-type") || "application/json", Buffer.from(await r.arrayBuffer()), retry ? { "Retry-After": retry } : {});
+        return send(res, r.status, r.headers.get("content-type") || "application/json", out, retry ? { "Retry-After": retry } : {});
       } catch (err) {
-        return json(res, 502, { detail: `TypeSafe unreachable: ${err.message}` });
+        return json(res, 502, { detail: `The model could not be reached: ${err.message}` });
       }
+    }
+
+    if (url.pathname === "/api/config" && req.method === "GET") {
+      day();
+      return json(res, 200, {
+        lends: { typesafe: Boolean(lending.typesafe), openrouter: Boolean(lending.openrouter) },
+        left: { tokens: Math.max(0, limits.tokens - used.tokens), requests: Math.max(0, limits.requests - used.requests) },
+        limits: { tokens: limits.tokens, requests: limits.requests },
+      });
     }
 
     if (url.pathname === "/api/games" && req.method === "POST") {
@@ -263,6 +382,21 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
 // Start when run directly, or by pm2, which loads ES modules through its own script.
 const entry = process.env.pm_exec_path || process.argv[1];
 if (entry && pathToFileURL(path.resolve(entry)).href === import.meta.url) {
+  const envFile = path.join(here, ".env"); // keys live here, never in the page or in git
+  if (fs.existsSync(envFile)) {
+    for (const m of fs.readFileSync(envFile, "utf8").matchAll(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/gm)) process.env[m[1]] ??= m[2];
+  }
   const port = Number(process.env.PORT || 3141);
-  createServer({ dataDir: process.env.DATA_DIR || undefined }).listen(port, "127.0.0.1", () => console.log(`Jev Chess: http://localhost:${port}/`));
+  lend({
+    typesafe: process.env.TYPESAFE_API_KEY || "",
+    openrouter: process.env.OPENROUTER_API_KEY || "",
+    tokens: Number(process.env.DAILY_TOKEN_BUDGET ?? 20_000_000),
+    requests: Number(process.env.DAILY_LLM_BUDGET ?? 3000),
+    share: Number(process.env.VISITOR_SHARE ?? 0.25),
+  });
+  createServer({ dataDir: process.env.DATA_DIR || undefined }).listen(port, "127.0.0.1", () => {
+    console.log(`Jev Chess: http://localhost:${port}/`);
+    const lends = [process.env.TYPESAFE_API_KEY && "TypeSafe", process.env.OPENROUTER_API_KEY && "OpenRouter"].filter(Boolean);
+    console.log(lends.length ? `Lending its own ${lends.join(" and ")} key, capped per day` : "No key of its own: visitors bring their own");
+  });
 }

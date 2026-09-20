@@ -56,6 +56,7 @@ const S = {
   human: null, // {game, controller}
   saved: { list: null, query: "", game: null, error: "", loading: false },
   stats: null, // Jev's record from the server
+  config: null, // what the site lends when a visitor has no key
   ply: null, // the move being viewed; null follows the game
   view: "grid", // with several games at once: "grid" shows every board, "one" the selected game
   flipped: false, // the reader's flip on top of the automatic side
@@ -65,7 +66,11 @@ const shown = () => (S.mode === "arena" ? S.arenaShown : S.mode === "human" ? S.
 const sideKey = (c) => (c === "w" ? "white" : "black");
 const jevColorOf = (g) => (g.white.kind === "jev" ? "w" : "b");
 const humanColorOf = (g) => (g.white.kind === "human" ? "w" : g.black.kind === "human" ? "b" : null);
-const jevRoute = () => (S.keys.typesafe ? "typesafe" : S.keys.openrouter ? "openrouter" : null);
+// A visitor's own key wins; with none, the site lends its own through its relay
+const jevRoute = () => (S.keys.typesafe ? "typesafe" : S.keys.openrouter ? "openrouter" : S.config?.lends.typesafe ? "shared" : null);
+const llmKey = () => S.keys.openrouter; // empty means the relay lends the site's key, free models only
+const canPlayLLMs = () => Boolean(S.keys.openrouter || S.config?.lends.openrouter);
+const freeOnly = () => S.freeOnly || !S.keys.openrouter; // the lent key pays for nothing
 const fmtMs = (ms) => (ms == null ? "" : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`);
 const fmtCost = (c) => (!c ? "free" : c < 0.01 ? `$${c.toFixed(4)}` : `$${c.toFixed(2)}`);
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -109,7 +114,8 @@ function toast(text) {
 // ---------------------------------------------------------------------------------------------
 function jevSide() {
   const route = jevRoute();
-  return { kind: "jev", name: "Jev", model: route === "typesafe" ? "jev-1.13.0" : "typesafe/jev-1.13", route };
+  const onTypeSafe = route === "typesafe" || route === "shared"; // the lent key is a TypeSafe one
+  return { kind: "jev", name: "Jev", model: onTypeSafe ? "jev-1.13.0" : "typesafe/jev-1.13", route };
 }
 
 function makeGame(white, black) {
@@ -137,8 +143,8 @@ function replay(g, moves) {
 }
 
 function playerFor(side, signal, game) {
-  if (side.kind === "jev") return jevPlayer({ route: side.route, key: side.route === "typesafe" ? S.keys.typesafe : S.keys.openrouter });
-  if (side.kind === "llm") return llmPlayer({ key: S.keys.openrouter, model: side.model, reasoning: side.reasoning });
+  if (side.kind === "jev") return jevPlayer({ route: side.route, key: side.route === "typesafe" ? S.keys.typesafe : side.route === "openrouter" ? S.keys.openrouter : "" });
+  if (side.kind === "llm") return llmPlayer({ key: llmKey(), model: side.model, reasoning: side.reasoning });
   if (side.kind === "engine") {
     return stockfishPlayer({
       elo: side.elo,
@@ -217,7 +223,7 @@ async function runGame(game, signal) {
 }
 
 async function save(game) {
-  const side = ({ kind, name, model, route }) => ({ kind, name, model, route });
+  const side = ({ kind, name, model, route }) => ({ kind, name, model, route: route === "shared" ? "typesafe" : route });
   const body = {
     white: side(game.white),
     black: side(game.black),
@@ -253,7 +259,7 @@ function arenaProblem() {
   const opps = opponents();
   if (!opps.length) return null;
   if (!jevRoute()) return "Jev needs an OpenRouter key or a TypeSafe key.";
-  if (opps.some((o) => o.kind === "llm") && !S.keys.openrouter) return "LLM opponents need an OpenRouter key.";
+  if (opps.some((o) => o.kind === "llm") && !canPlayLLMs()) return "LLM opponents need an OpenRouter key.";
   return null;
 }
 
@@ -644,9 +650,7 @@ function renderPlayers(g, pos) {
     const lastNote = g?.moves.slice(0, k).findLast((m) => m.color === color)?.note;
     const sub =
       p.kind === "jev"
-        ? p.route
-          ? `Jev 1.13 via ${p.route === "typesafe" ? "TypeSafe" : "OpenRouter"}`
-          : "Jev 1.13: add a TypeSafe or OpenRouter key"
+        ? { typesafe: "Jev 1.13 via TypeSafe", openrouter: "Jev 1.13 via OpenRouter", shared: "Jev 1.13 via TypeSafe, on the site's key" }[p.route] || "Jev 1.13: add a TypeSafe or OpenRouter key"
         : p.kind === "engine"
           ? `Stockfish 19 lite at Elo ${p.elo || p.model.split("-").pop()}`
           : p.kind === "llm"
@@ -809,13 +813,15 @@ function renderSetup() {
   // header and panels
   for (const b of $$(".modes button")) b.setAttribute("aria-pressed", String(b.dataset.mode === S.mode));
   app.dataset.mode = S.mode;
-  $("#keysDot").classList.toggle("ok", Boolean(S.keys.openrouter || S.keys.typesafe));
+  $("#keysDot").classList.toggle("ok", Boolean(S.keys.openrouter || S.keys.typesafe || S.config?.lends.typesafe));
   const seg = (id, v) => $$(`#${id} button`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === String(v))));
   seg("jevColor", S.jevColor);
   seg("pace", S.pace);
   seg("humanColor", S.humanColor);
   $("#showArrows").checked = S.showArrows;
-  $("#freeOnly").checked = S.freeOnly;
+  $("#freeOnly").checked = freeOnly();
+  $("#freeOnly").disabled = !S.keys.openrouter; // the site's own key plays free models only
+  $("#freeOnly").closest(".toggle").title = S.keys.openrouter ? "Show only free models" : "The site's key plays free models only. Add your own OpenRouter key for the rest.";
 
   // arena
   const running = Boolean(S.run?.running);
@@ -864,7 +870,7 @@ function renderModels() {
   if (!S.models) return fill(box, h("p", { class: "empty" }, S.modelError || "Loading models…"));
   const words = S.query.toLowerCase().split(/\s+/).filter(Boolean);
   const list = S.models
-    .filter((m) => S.picks.has(m.id) || ((!S.freeOnly || m.free) && words.every((w) => m.search.includes(w))))
+    .filter((m) => S.picks.has(m.id) || ((!freeOnly() || m.free) && words.every((w) => m.search.includes(w))))
     .sort((a, b) => S.picks.has(b.id) - S.picks.has(a.id) || a.name.localeCompare(b.name));
   if (!list.length) return fill(box, h("p", { class: "empty" }, "No model matches."));
   // Native checkboxes in labels, so the list works from the keyboard too
@@ -933,6 +939,15 @@ const KINDS = [
 ];
 const rate = (r) => (r.games ? `${Math.round((r.won / r.games) * 100)}%` : "none");
 const tally = (r) => `${plural(r.games, "game")}: ${r.won} won, ${r.drawn} drawn, ${r.lost} lost`;
+
+/** What this site lends to visitors who bring no key. */
+async function loadConfig() {
+  try {
+    const r = await fetch("api/config");
+    if (r.ok) S.config = await r.json();
+  } catch {}
+  schedule();
+}
 
 let statsSeq = 0;
 async function loadStats() {
@@ -1156,6 +1171,10 @@ function goto(k) {
 }
 
 function openKeys() {
+  const left = S.config?.left;
+  $("#lendNote").textContent = !S.config?.lends.typesafe
+    ? "Bring a key to play: nothing is stored on the server."
+    : `A key is optional: this site lends its own, capped per day (about ${Math.round((left?.tokens || 0) / 180_000)} Jev games and ${left?.requests || 0} LLM moves left today). Your own key lifts the cap and plays paid models.`;
   $("#orKey").value = S.keys.openrouter;
   $("#tsKey").value = S.keys.typesafe;
   routeNote();
@@ -1341,3 +1360,4 @@ if (/^[0-9a-f]{12}$/.test(linked || "")) {
 } else setMode(S.mode);
 renderModels();
 loadStats();
+loadConfig();

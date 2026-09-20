@@ -8,3 +8,4 @@ deploy/
 .gstack/
 .hallmark/
 build/
+!.env.example
