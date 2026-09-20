@@ -79,7 +79,11 @@ svg { display: block; }
 .setup { grid-area: setup; }
 .stage { grid-area: stage; }
 .info { grid-area: info; }
-.app > .ptabs { display: none; }
+.top .drawer-toggle { display: none; } /* the setup is a column of its own until the screen narrows */
+.drawer-toggle svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.drawer-toggle .dot { margin-left: 2px; }
+.scrim { position: fixed; inset: 0; z-index: 35; background: rgba(10, 12, 20, 0.45); }
+.drawer-head { display: none; }
 
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-size: 17px; letter-spacing: -0.01em; white-space: nowrap; }
 .brand img { border-radius: 8px; }
@@ -436,12 +440,21 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* ------------------------------------------------------------------ smaller screens */
+/* Narrower than three columns: the setup slides in from the left over everything else */
 @media (max-width: 1180px) {
-  .app { grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top top" "stage tabs" "stage panel"; }
-  .ptabs { grid-area: tabs; }
-  .setup, .info { grid-area: panel; }
-  .app > .ptabs { display: flex; }
-  .app[data-panel="setup"] .info, .app[data-panel="info"] .setup { display: none; }
+  .app { grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "top top" "stage panel"; }
+  .info { grid-area: panel; }
+  .top .drawer-toggle { display: inline-flex; }
+  .setup {
+    position: fixed; top: 0; bottom: 0; left: 0; width: min(88vw, 340px); z-index: 40;
+    border-radius: 0 16px 16px 0; border-left: 0;
+    transform: translateX(-101%); transition: transform 0.22s ease;
+    box-shadow: 0 20px 60px rgba(10, 12, 20, 0.35);
+  }
+  .app[data-drawer="open"] .setup { transform: none; }
+  .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); flex: none; }
+  .drawer-head b { font-size: 15px; }
+  .setup > section { padding-top: max(16px, env(safe-area-inset-top)); }
 }
 @media (max-width: 1180px) {
   .stats-title { display: none; }
@@ -457,7 +470,7 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 }
 @media (max-width: 760px) and (orientation: portrait), (max-width: 520px) {
   body { font-size: 14px; }
-  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(0, 1fr); grid-template-areas: "top" "stage" "tabs" "panel"; gap: 8px; padding: 8px 10px 10px; }
+  .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top" "stage" "panel"; gap: 8px; padding: 8px 10px 10px; }
   .top { flex-wrap: wrap; gap: 8px; }
   .brand span, .stats-title, .top-actions .icon-btn { display: none; }
   .statsbtn { flex: 1; min-width: 0; height: 36px; gap: 10px; padding: 0 10px; justify-content: space-around; }
@@ -466,6 +479,8 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
   .stat b { font-size: 13px; }
   .stat small, .stat .n { font-size: 10px; }
   .modes { order: 3; width: 100%; margin: 0; }
+  .drawer-toggle span { display: none; } /* the icon alone, to keep the header on two rows */
+  .drawer-toggle { padding: 0 10px; }
   .modes button { padding: 6px 6px; font-size: 13px; }
   .top-actions { margin-left: auto; }
   .top-actions .btn { padding: 0 8px; }

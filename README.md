@@ -39,9 +39,10 @@ record against each LLM and each Stockfish level.
 ![One game up close: Jev's move against Stockfish, the moves it weighed as arrows, and their probabilities beside the move list](documentation/screenshot.jpg)
 
 The layout is one page with no scrolling: setup on the left, the board in the middle, the moves and
-the details of the selected move on the right. On a phone the board sits on top and the two panels
-share a tab bar. Arrow keys step through the moves and F flips the board. Light and dark themes
-follow the system.
+the details of the selected move on the right. Below a wide screen the left column becomes a drawer
+that slides over the board, so opponents are picked full height and a tap outside puts them away;
+on a phone the board then sits above the moves. Arrow keys step through the moves and F flips the
+board. Light and dark themes follow the system.
 
 ## How Jev plays chess
 

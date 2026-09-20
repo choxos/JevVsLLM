@@ -14,8 +14,12 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <div class="app" data-mode="arena" data-panel="setup">
+  <div class="app" data-mode="arena" data-drawer="closed">
     <header class="top">
+      <button type="button" class="btn ghost drawer-toggle" id="setupToggle" aria-expanded="false" aria-controls="setupPanel" title="Opponents and settings">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        <span id="setupToggleLabel">Opponents</span>
+      </button>
       <a class="brand" href="./" aria-label="Jev Chess home">
         <img src="favicon.svg" alt="" width="28" height="28">
         <span>Jev <b>Chess</b></span>
@@ -39,12 +43,11 @@
       </div>
     </header>
 
-    <nav class="seg ptabs" aria-label="Panel">
-      <button type="button" data-panel="setup" aria-pressed="true">Setup</button>
-      <button type="button" data-panel="info" aria-pressed="false">Moves</button>
-    </nav>
-
-    <aside class="panel setup">
+    <aside class="panel setup" id="setupPanel">
+      <div class="drawer-head">
+        <b id="drawerTitle">Opponents</b>
+        <button type="button" class="icon-btn" id="setupClose" aria-label="Close the panel" title="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
       <!-- Jev vs machines -->
       <section class="for-arena stack">
         <div class="field grow">
@@ -146,6 +149,8 @@
       <div class="gamebar" id="gamebar"></div>
     </aside>
   </div>
+
+  <div class="scrim" id="scrim" hidden></div>
 
   <dialog id="keysDialog" class="dialog">
     <form method="dialog" class="stack">

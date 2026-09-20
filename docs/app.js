@@ -280,7 +280,7 @@ function startArena() {
   cells.clear();
   S.ply = null;
   S.flipped = false;
-  setPanel("info");
+  closeDrawer(); // the board is the thing to watch now
   schedule();
   Promise.allSettled(games.map((g) => runGame(g, controller.signal))).then(() => {
     run.running = false;
@@ -429,7 +429,7 @@ async function openSaved(id) {
     S.ply = null;
     S.flipped = false;
     animateNext = null;
-    setPanel("info");
+    closeDrawer();
     schedule();
     renderHistory();
   } catch {
@@ -814,6 +814,7 @@ function renderSetup() {
   for (const b of $$(".modes button")) b.setAttribute("aria-pressed", String(b.dataset.mode === S.mode));
   app.dataset.mode = S.mode;
   $("#keysDot").classList.toggle("ok", Boolean(S.keys.openrouter || S.keys.typesafe || S.config?.lends.typesafe));
+  $("#setupToggleLabel").textContent = $("#drawerTitle").textContent = { arena: "Opponents", human: "Play", history: "Saved games" }[S.mode];
   const seg = (id, v) => $$(`#${id} button`).forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === String(v))));
   seg("jevColor", S.jevColor);
   seg("pace", S.pace);
@@ -1150,14 +1151,20 @@ function setMode(mode) {
   S.flipped = false;
   animateNext = null;
   if (mode === "history" && !S.saved.list) loadSaved();
-  setPanel(shown() ? "info" : "setup");
+  if (narrow()) setDrawer(!shown()); // the mode's controls live in the drawer: show them when there is no game yet
   schedule();
 }
 
-function setPanel(p) {
-  app.dataset.panel = p;
-  for (const b of $$(".ptabs button")) b.setAttribute("aria-pressed", String(b.dataset.panel === p));
+/** Under 1180px the setup is a drawer over the board; wider, it is always in view. */
+const narrow = () => matchMedia("(max-width: 1180px)").matches;
+
+function setDrawer(open) {
+  app.dataset.drawer = open ? "open" : "closed";
+  $("#scrim").hidden = !open;
+  $("#setupToggle").setAttribute("aria-expanded", String(open));
+  if (open) $(`.setup .for-${S.mode}`)?.querySelector("button, input, [tabindex]")?.focus({ preventScroll: true });
 }
+const closeDrawer = () => narrow() && setDrawer(false);
 
 function goto(k) {
   const g = shown();
@@ -1195,7 +1202,9 @@ $("#tsKey").addEventListener("input", routeNote);
 $("#orKey").addEventListener("input", routeNote);
 
 $$(".modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
-$$(".ptabs button").forEach((b) => b.addEventListener("click", () => setPanel(b.dataset.panel)));
+$("#setupToggle").addEventListener("click", () => setDrawer(app.dataset.drawer !== "open"));
+$("#scrim").addEventListener("click", () => setDrawer(false));
+$("#setupClose").addEventListener("click", () => setDrawer(false));
 $("#keysBtn").addEventListener("click", openKeys);
 $("#saveKeys").addEventListener("click", () => {
   S.keys = { openrouter: $("#orKey").value.trim(), typesafe: $("#tsKey").value.trim() };
@@ -1258,7 +1267,7 @@ $("#freeOnly").addEventListener("change", (e) => {
   renderModels();
 });
 $("#startBtn").addEventListener("click", startArena);
-$("#newGameBtn").addEventListener("click", newHumanGame);
+$("#newGameBtn").addEventListener("click", () => (newHumanGame(), closeDrawer()));
 $("#typedMove").addEventListener("submit", (e) => {
   e.preventDefault();
   const g = S.human?.game;
@@ -1296,6 +1305,7 @@ $$("[data-nav]").forEach((b) =>
 document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, dialog") || e.metaKey || e.ctrlKey || e.altKey) return;
   const g = shown();
+  if (e.key === "Escape" && app.dataset.drawer === "open") return setDrawer(false);
   if (e.key === "f") return (S.flipped = !S.flipped), schedule();
   if (e.key === "v" && S.mode === "human" && Recognition()) return setVoice(!voice.on);
   if (!g) return;
