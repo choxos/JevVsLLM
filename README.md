@@ -5,9 +5,9 @@ the Stockfish engine, or play Jev yourself. Every move is shown as it happens, w
 weighed and how likely it thought each one was, and every finished game is saved for replay.
 
 **Play it at [jevchess.xera.ac](https://jevchess.xera.ac), with no key.** The site lends its own
-keys, capped per day and to free OpenRouter models. Your own key lifts the cap and plays paid
-models: an OpenRouter key runs the LLMs (and Jev, with a little credit, since Jev is not free
-there), and a TypeSafe key runs Jev.
+keys, capped per day in tokens, requests and credit. Your own key lifts the cap and plays the
+dearest models: an OpenRouter key runs the LLMs (and Jev, with a little credit, since Jev is not
+free there), and a TypeSafe key runs Jev.
 
 ![Jev plays Stockfish 1320 and Mercury 2.5 at once; the moves Jev weighed are drawn as arrows](documentation/tour.gif)
 
@@ -104,8 +104,8 @@ or is drawn after 100 moves each.
 
 * Keys are kept in your browser's local storage and sent only to where they are used.
 * Without a key, the site's own keys are used. They live in `.env` on the server, are never sent to
-  the page, and are lent within a daily budget, a share of it per visitor, and only to free
-  OpenRouter models, so nobody can spend the site's money on a paid one.
+  the page, and are lent within a daily budget: Jev tokens, LLM requests and dollars of OpenRouter
+  credit, a share of each per visitor, and no model dearer than a set price per million tokens.
 * With a TypeSafe key, Jev always runs on it, never through OpenRouter; without one, Jev runs
   through OpenRouter.
 * OpenRouter accepts calls from web pages, so LLM moves and Jev on OpenRouter

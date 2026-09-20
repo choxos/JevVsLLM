@@ -70,7 +70,8 @@ const humanColorOf = (g) => (g.white.kind === "human" ? "w" : g.black.kind === "
 const jevRoute = () => (S.keys.typesafe ? "typesafe" : S.keys.openrouter ? "openrouter" : S.config?.lends.typesafe ? "shared" : null);
 const llmKey = () => S.keys.openrouter; // empty means the relay lends the site's key, free models only
 const canPlayLLMs = () => Boolean(S.keys.openrouter || S.config?.lends.openrouter);
-const freeOnly = () => S.freeOnly || !S.keys.openrouter; // the lent key pays for nothing
+// dearer than the site lends, or with no set price at all, so it needs the visitor's own key
+const dear = (m) => !S.keys.openrouter && Boolean(S.config) && (m.priceIn < 0 || m.priceIn > S.config.limits.price);
 const fmtMs = (ms) => (ms == null ? "" : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`);
 const fmtCost = (c) => (!c ? "free" : c < 0.01 ? `$${c.toFixed(4)}` : `$${c.toFixed(2)}`);
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -820,9 +821,8 @@ function renderSetup() {
   seg("pace", S.pace);
   seg("humanColor", S.humanColor);
   $("#showArrows").checked = S.showArrows;
-  $("#freeOnly").checked = freeOnly();
-  $("#freeOnly").disabled = !S.keys.openrouter; // the site's own key plays free models only
-  $("#freeOnly").closest(".toggle").title = S.keys.openrouter ? "Show only free models" : "The site's key plays free models only. Add your own OpenRouter key for the rest.";
+  $("#freeOnly").checked = S.freeOnly;
+  $("#freeOnly").closest(".toggle").title = "Show only free models";
 
   // arena
   const running = Boolean(S.run?.running);
@@ -867,11 +867,16 @@ function render() {
 
 function renderModels() {
   const box = $("#models");
-  $("#modelsNote").textContent = S.models ? `${S.models.length} models, live from OpenRouter at ${S.modelsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+  const note = S.models ? [`${S.models.length} models, live from OpenRouter at ${S.modelsAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`] : [];
+  if (S.models && !S.keys.openrouter && S.config?.lends.openrouter) {
+    note.push(`${fmtCost(S.config.left.spend)} of the site's credit left today`);
+    note.push(`over ${fmtCost(S.config.limits.price)} a million tokens needs your own key`);
+  }
+  $("#modelsNote").textContent = note.join(" · ");
   if (!S.models) return fill(box, h("p", { class: "empty" }, S.modelError || "Loading models…"));
   const words = S.query.toLowerCase().split(/\s+/).filter(Boolean);
   const list = S.models
-    .filter((m) => S.picks.has(m.id) || ((!freeOnly() || m.free) && words.every((w) => m.search.includes(w))))
+    .filter((m) => S.picks.has(m.id) || ((!S.freeOnly || m.free) && !dear(m) && words.every((w) => m.search.includes(w))))
     .sort((a, b) => S.picks.has(b.id) - S.picks.has(a.id) || a.name.localeCompare(b.name));
   if (!list.length) return fill(box, h("p", { class: "empty" }, "No model matches."));
   // Native checkboxes in labels, so the list works from the keyboard too
@@ -1181,7 +1186,7 @@ function openKeys() {
   const left = S.config?.left;
   $("#lendNote").textContent = !S.config?.lends.typesafe
     ? "Bring a key to play: nothing is stored on the server."
-    : `A key is optional: this site lends its own, capped per day (about ${Math.round((left?.tokens || 0) / 180_000)} Jev games and ${left?.requests || 0} LLM moves left today). Your own key lifts the cap and plays paid models.`;
+    : `A key is optional: this site lends its own, capped per day (about ${Math.round((left?.tokens || 0) / 180_000)} Jev games and ${fmtCost(left?.spend || 0)} of LLM credit left today). Your own key lifts the cap and plays the dearest models.`;
   $("#orKey").value = S.keys.openrouter;
   $("#tsKey").value = S.keys.typesafe;
   routeNote();
@@ -1340,6 +1345,8 @@ async function loadModels() {
           name: (m.name || m.id).replace(/\s*\(free\)$/i, ""),
           free,
           price: pIn < 0 || pOut < 0 ? "varies" : `$${fmt(pIn)} / $${fmt(pOut)}`,
+          priceIn: pIn < 0 || pOut < 0 ? -1 : Math.max(pIn, pOut / 4), // what a million tokens costs, near enough to compare
+
           reasoning: (m.supported_parameters || []).includes("reasoning"),
           structured: (m.supported_parameters || []).includes("structured_outputs"),
           search: `${m.name} ${m.id}`.toLowerCase(),

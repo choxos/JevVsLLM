@@ -13,8 +13,8 @@
  *
  * A visitor with a key of their own sends it, and it is passed on and forgotten. Without one, the
  * site lends the keys in its .env, which stay on this machine: they are never sent to the page.
- * What the site lends is capped, per day and per visitor, and only free OpenRouter models are
- * lent, since a paid model would spend the site's money.
+ * What the site lends is capped per day and per visitor, in Jev tokens, LLM requests and dollars
+ * of OpenRouter credit, and a model dearer than a set price is not lent at all.
  *
  * API keys are never stored or logged, and a saved game is rebuilt field by field from what a game
  * needs, so nothing else a page sends (a key included) can reach the disk.
@@ -27,6 +27,9 @@
  *   DAILY_TOKEN_BUDGET  TypeSafe input tokens the site lends per UTC day (default 20 million,
  *                       about $0.84; 0 lends none)
  *   DAILY_LLM_BUDGET    OpenRouter requests the site lends per UTC day (default 3000)
+ *   DAILY_LLM_SPEND     dollars of OpenRouter credit the site lends per UTC day (default 0.5)
+ *   MAX_MODEL_PRICE     dearest model the site lends, in dollars per million tokens (default 0.5,
+ *                       which lets a whole game fit inside one visitor's share)
  *   VISITOR_SHARE       the share of a day's lending one visitor may take (default 0.25)
  */
 import http from "node:http";
@@ -191,39 +194,41 @@ function readGames(file) {
 // The keys this site lends, and what it lends them for
 // ---------------------------------------------------------------------------------------------
 const lending = { typesafe: "", openrouter: "" };
-const limits = { tokens: 20_000_000, requests: 3000, share: 0.25 };
-const used = { day: "", tokens: 0, requests: 0, byVisitor: new Map() };
+// price is per million tokens: at 0.5 a whole game (about 250k tokens) fits one visitor's share
+const limits = { tokens: 20_000_000, requests: 3000, spend: 0.5, price: 0.5, share: 0.25 };
+const used = { day: "", tokens: 0, requests: 0, spend: 0, byVisitor: new Map() };
 const SALT = crypto.randomBytes(16); // visitors are counted by a hash that dies with the process
-let freeModels = { at: 0, ids: null }; // OpenRouter's free models, refreshed hourly
+let models = { at: 0, price: null }; // what each OpenRouter model costs, refreshed hourly
 
-export function lend({ typesafe = "", openrouter = "", tokens, requests, share } = {}) {
+export function lend({ typesafe = "", openrouter = "", tokens, requests, spend, price, share } = {}) {
   Object.assign(lending, { typesafe, openrouter });
-  if (Number.isFinite(tokens)) limits.tokens = tokens;
-  if (Number.isFinite(requests)) limits.requests = requests;
+  for (const [k, v] of Object.entries({ tokens, requests, spend, price })) if (Number.isFinite(v)) limits[k] = v;
   if (Number.isFinite(share)) limits.share = Math.min(1, Math.max(0.01, share));
 }
 
 /** Resets the day's counters at midnight UTC. */
 function day() {
   const today = new Date().toISOString().slice(0, 10);
-  if (used.day !== today) Object.assign(used, { day: today, tokens: 0, requests: 0, byVisitor: new Map() });
+  if (used.day !== today) Object.assign(used, { day: today, tokens: 0, requests: 0, spend: 0, byVisitor: new Map() });
   return used;
 }
 
 const visitorOf = (req) => crypto.createHash("sha256").update(SALT).update(String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")).digest("hex").slice(0, 16);
 
-/** The ids of every OpenRouter model that costs nothing, so only those are played on the site's key. */
-async function freeIds() {
-  if (freeModels.ids && Date.now() - freeModels.at < 3600_000) return freeModels.ids;
+/** What a million input tokens costs at each OpenRouter model, so a dear one is not played by mistake. */
+async function priceList() {
+  if (models.price && Date.now() - models.at < 3600_000) return models.price;
   try {
     const r = await fetch(`${OPENROUTER}/api/v1/models`, { signal: AbortSignal.timeout(15_000) });
     if (!r.ok) throw new Error(r.statusText);
     const { data } = await r.json();
-    freeModels = { at: Date.now(), ids: new Set(data.filter((m) => Number(m.pricing?.prompt) === 0 && Number(m.pricing?.completion) === 0).map((m) => m.id)) };
+    // a model that names no price (it routes wherever it likes) keeps its -1 and is not lent
+    const per = (m) => (Number(m.pricing?.prompt) < 0 || Number(m.pricing?.completion) < 0 ? -1 : Math.max(Number(m.pricing?.prompt) || 0, (Number(m.pricing?.completion) || 0) / 4) * 1e6);
+    models = { at: Date.now(), price: new Map(data.map((m) => [m.id, per(m)])) };
   } catch {
-    if (!freeModels.ids) freeModels = { at: Date.now() - 3540_000, ids: new Set() }; // try again in a minute
+    if (!models.price) models = { at: Date.now() - 3540_000, price: new Map() }; // try again in a minute
   }
-  return freeModels.ids;
+  return models.price;
 }
 
 /** Whether this borrowed request may go ahead; a string says why not. */
@@ -238,15 +243,18 @@ async function borrow(visitor, pathname, body) {
     if (mine.tokens >= limits.tokens * limits.share) return "You have used your share of the site's Jev key today. Add your own key in API keys to keep playing.";
     return null;
   }
-  if (u.requests >= limits.requests) return "The site's OpenRouter key has done its day's work. Add your own key in API keys, or come back tomorrow.";
-  if (mine.requests >= limits.requests * limits.share) return "You have used your share of the site's OpenRouter key today. Add your own key in API keys to keep playing.";
+  const ended = "Add your own key in API keys, or come back tomorrow.";
+  if (u.requests >= limits.requests || u.spend >= limits.spend) return `The site's OpenRouter key has done its day's work. ${ended}`;
+  if (mine.requests >= limits.requests * limits.share || mine.spend >= limits.spend * limits.share) return "You have used your share of the site's OpenRouter key today. Add your own key in API keys to keep playing.";
   if (pathname === "/v1/openrouter/chat") {
     let model = "";
     try {
       model = String(JSON.parse(body).model || "");
     } catch {}
-    const free = await freeIds();
-    if (!free.has(model)) return `${model || "That model"} is not free on OpenRouter, so it needs your own key. Add one in API keys, or pick a free model.`;
+    const price = (await priceList()).get(model);
+    if (price === undefined) return `${model || "That model"} is not one OpenRouter lists. Pick another, or add your own key in API keys.`;
+    if (price < 0) return `${model} names no price, since it routes to whichever model it likes, so it needs your own key. Add one in API keys.`;
+    if (price > limits.price) return `${model} costs $${price.toFixed(2)} a million tokens, more than this site lends. Pick a cheaper model, or add your own key in API keys.`;
   }
   return null;
 }
@@ -266,6 +274,12 @@ function spend(pathname, out, visitor) {
   }
   u.requests += 1;
   if (mine) mine.requests += 1;
+  let cost = 0;
+  try {
+    cost = Number(JSON.parse(out).usage?.cost) || 0; // free models cost nothing and add nothing
+  } catch {}
+  u.spend += cost;
+  if (mine) mine.spend = (mine.spend || 0) + cost;
 }
 
 export function createServer({ dataDir = path.join(here, "data") } = {}) {
@@ -333,8 +347,12 @@ export function createServer({ dataDir = path.join(here, "data") } = {}) {
       day();
       return json(res, 200, {
         lends: { typesafe: Boolean(lending.typesafe), openrouter: Boolean(lending.openrouter) },
-        left: { tokens: Math.max(0, limits.tokens - used.tokens), requests: Math.max(0, limits.requests - used.requests) },
-        limits: { tokens: limits.tokens, requests: limits.requests },
+        left: {
+          tokens: Math.max(0, limits.tokens - used.tokens),
+          requests: Math.max(0, limits.requests - used.requests),
+          spend: Math.round(Math.max(0, limits.spend - used.spend) * 1000) / 1000,
+        },
+        limits: { tokens: limits.tokens, requests: limits.requests, spend: limits.spend, price: limits.price },
       });
     }
 
@@ -392,6 +410,8 @@ if (entry && pathToFileURL(path.resolve(entry)).href === import.meta.url) {
     openrouter: process.env.OPENROUTER_API_KEY || "",
     tokens: Number(process.env.DAILY_TOKEN_BUDGET ?? 20_000_000),
     requests: Number(process.env.DAILY_LLM_BUDGET ?? 3000),
+    spend: Number(process.env.DAILY_LLM_SPEND ?? 0.5),
+    price: Number(process.env.MAX_MODEL_PRICE ?? 0.5),
     share: Number(process.env.VISITOR_SHARE ?? 0.25),
   });
   createServer({ dataDir: process.env.DATA_DIR || undefined }).listen(port, "127.0.0.1", () => {
